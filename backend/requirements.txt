@@ -2,3 +2,9 @@ fastapi
 uvicorn[standard]
 redis
 python-dotenv
+sqlalchemy
+aiosqlite
+passlib[bcrypt]
+python-jose[cryptography]
+pydantic[email]
+asyncpg

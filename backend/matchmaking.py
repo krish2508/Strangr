@@ -6,6 +6,8 @@ class MatchmakingQueue:
         self.queue = deque()
 
     def add_user(self, user):
+        if user in self.queue:
+            return
         self.queue.append(user)
 
     def remove_user(self, user):

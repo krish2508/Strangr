@@ -1,14 +1,31 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 from connection_manager import manager
 from matchmaking import matchmaker
 from redis_sessions import create_session, get_partner, remove_session
 from redis_pubsub import start_listener, publish_message
+
+from database import engine, Base
+from routes import auth_routes
+
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, restrict this to the frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_routes.router, tags=["auth"])
 
 @app.on_event("startup")
 async def startup_event():
     start_listener()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(ws: WebSocket, user_id: str):
 
