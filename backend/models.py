@@ -12,3 +12,4 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     password_hash = Column(String, nullable=False)
+    provider = Column(String, nullable=True)
