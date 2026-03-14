@@ -1,145 +1,145 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-<title>Omegle Clone Test</title>
-<style>
+    <title>Omegle Clone Test</title>
+    <style>
+        body {
+            font-family: Arial;
+            margin: 40px;
+        }
 
-body{
-    font-family: Arial;
-    margin:40px;
-}
+        #chat {
+            border: 1px solid #ccc;
+            height: 300px;
+            overflow: auto;
+            padding: 10px;
+        }
 
-#chat{
-    border:1px solid #ccc;
-    height:300px;
-    overflow:auto;
-    padding:10px;
-}
-
-input{
-    width:300px;
-}
-
-</style>
+        input {
+            width: 300px;
+        }
+    </style>
 </head>
 
 <body>
 
-<h2>Omegle Clone Test Client</h2>
+    <h2>Omegle Clone Test Client</h2>
 
-<button onclick="connect()">Connect</button>
-<button onclick="nextStranger()">Next Stranger</button>
+    <button onclick="connect()">Connect</button>
+    <button onclick="nextStranger()">Next Stranger</button>
 
-<br><br>
+    <br><br>
 
-<div id="chat"></div>
+    <div id="chat"></div>
 
-<br>
+    <br>
 
-<input id="message" type="text" placeholder="Type message">
-<button onclick="sendMessage()">Send</button>
+    <input id="message" type="text" placeholder="Type message">
+    <button onclick="sendMessage()">Send</button>
 
-<script>
+    <script>
 
-let ws = null
+        let ws = null
 
-// generate random user id
-const userId = Math.floor(Math.random()*1000000)
+        // generate random user id
+        const userId = Math.floor(Math.random() * 1000000)
+        const IP_ADDRESS = "192.168.1.46"
+        function connect() {
 
-function connect(){
+            ws = new WebSocket(`ws://${IP_ADDRESS}:8000/ws/${userId}`)
 
-    ws = new WebSocket(`ws://localhost:8000/ws/${userId}`)
+            ws.onopen = () => {
+                addMessage("[System] Connected to server")
+            }
 
-    ws.onopen = () => {
-        addMessage("[System] Connected to server")
-    }
+            ws.onmessage = (event) => {
 
-    ws.onmessage = (event) => {
+                const data = JSON.parse(event.data)
 
-        const data = JSON.parse(event.data)
+                if (data.type === "chat") {
+                    addMessage("Stranger: " + data.message)
+                }
 
-        if(data.type === "chat"){
-            addMessage("Stranger: " + data.message)
+                if (data.type === "typing") {
+                    addMessage("Stranger is typing...")
+                }
+
+                if (data.type === "system") {
+                    addMessage("[System] " + data.message)
+                }
+
+            }
+
+            ws.onclose = () => {
+                addMessage("[System] Connection closed")
+            }
+
         }
 
-        if(data.type === "typing"){
-            addMessage("Stranger is typing...")
+        function sendMessage() {
+
+            const input = document.getElementById("message")
+
+            if (!ws) return
+
+            ws.send(JSON.stringify({
+                type: "chat",
+                message: input.value
+            }))
+
+            addMessage("You: " + input.value)
+
+            input.value = ""
+
         }
 
-        if(data.type === "system"){
-            addMessage("[System] " + data.message)
+        function nextStranger() {
+
+            if (!ws) return
+
+            ws.send(JSON.stringify({
+                type: "next"
+            }))
+
+            addMessage("[System] Searching for new stranger...")
+
         }
 
-    }
+        function addMessage(msg) {
 
-    ws.onclose = () => {
-        addMessage("[System] Connection closed")
-    }
+            const chat = document.getElementById("chat")
 
-}
+            const div = document.createElement("div")
+            div.textContent = msg
 
-function sendMessage(){
+            chat.appendChild(div)
 
-    const input = document.getElementById("message")
+            chat.scrollTop = chat.scrollHeight
 
-    if(!ws) return
+        }
 
-    ws.send(JSON.stringify({
-        type: "chat",
-        message: input.value
-    }))
+        let typing = false
 
-    addMessage("You: " + input.value)
+        document.getElementById("message").addEventListener("keypress", () => {
 
-    input.value = ""
+            if (!typing) {
 
-}
+                ws.send(JSON.stringify({
+                    type: "typing"
+                }))
 
-function nextStranger(){
+                typing = true
 
-    if(!ws) return
+                setTimeout(() => {
+                    typing = false
+                }, 1000)
+            }
 
-    ws.send(JSON.stringify({
-        type:"next"
-    }))
+        })
 
-    addMessage("[System] Searching for new stranger...")
-
-}
-
-function addMessage(msg){
-
-    const chat = document.getElementById("chat")
-
-    const div = document.createElement("div")
-    div.textContent = msg
-
-    chat.appendChild(div)
-
-    chat.scrollTop = chat.scrollHeight
-
-}
-
-let typing = false
-
-document.getElementById("message").addEventListener("keypress", () => {
-
-    if(!typing){
-
-        ws.send(JSON.stringify({
-            type:"typing"
-        }))
-
-        typing = true
-
-        setTimeout(()=>{
-            typing = false
-        },1000)
-    }
-
-})
-
-</script>
+    </script>
 
 </body>
+
 </html>
