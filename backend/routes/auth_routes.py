@@ -21,6 +21,11 @@ async def login_for_access_token(user_credentials: schemas.UserLogin, db: AsyncS
     logger.debug("POST /login endpoint accessed")
     return await AuthController.login(user_credentials, db)
 
+@router.post("/auth/google", response_model=schemas.Token)
+async def google_auth(data: schemas.GoogleAuth, db: AsyncSession = Depends(get_db)):
+    logger.debug("POST /auth/google endpoint accessed")
+    return await AuthController.google_login(data.token, db)
+
 # Example protected route to demonstrate the decorator
 @router.get("/users/me", response_model=schemas.UserOut)
 async def read_users_me(current_user: models.User = Depends(get_current_user)):

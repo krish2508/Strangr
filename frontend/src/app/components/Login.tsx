@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { Zap, Mail, Lock, Eye, EyeOff, User as UserIcon } from "lucide-react";
 import { motion } from "motion/react";
+import { useGoogleLogin } from "@react-oauth/google";
 import { api } from "../api";
 
 export function Login() {
@@ -98,17 +99,33 @@ export function Login() {
     }
   };
 
+  const googleLogin = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setServerError("");
+      setIsLoading(true);
+      try {
+        const res = await api.googleLogin(tokenResponse.access_token);
+        console.log(res);
+        localStorage.setItem("strangr_token", res.access_token);
+        
+        // Fetch user string to store in localstorage
+        const user = await api.getCurrentUser(res.access_token);
+        localStorage.setItem("strangr_user", JSON.stringify({ ...user, loginTime: new Date().toISOString() }));
+        
+        navigate("/landing");
+      } catch (err: any) {
+        setServerError(err.message || "Google Login failed");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    onError: () => {
+      setServerError("Google Login was unsuccessful");
+    }
+  });
+
   const handleGoogleLogin = () => {
-    // Simulate Google authentication
-    const user = {
-      email: "user@gmail.com",
-      name: "Demo User",
-      loginTime: new Date().toISOString(),
-      provider: "google",
-    };
-    localStorage.setItem("strangr_user", JSON.stringify(user));
-    
-    navigate("/landing");
+    googleLogin();
   };
 
   return (

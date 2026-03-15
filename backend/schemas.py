@@ -10,6 +10,9 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class GoogleAuth(BaseModel):
+    token: str
+
 class UserOut(BaseModel):
     id: UUID
     name: str
