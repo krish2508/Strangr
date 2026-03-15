@@ -1,12 +1,13 @@
 import { useNavigate } from "react-router";
 import { MessageCircle, Video, Zap, Shield, Globe, Users, LogOut } from "lucide-react";
 import { motion } from "motion/react";
+import { authToken } from "../authToken";
 
 export function Landing() {
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    localStorage.removeItem("strangr_token");
+    authToken.clear();
     localStorage.removeItem("strangr_user");
     navigate("/");
   };

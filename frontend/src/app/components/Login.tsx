@@ -4,6 +4,7 @@ import { Zap, Mail, Lock, Eye, EyeOff, User as UserIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { useGoogleLogin } from "@react-oauth/google";
 import { api } from "../api";
+import { authToken } from "../authToken";
 
 export function Login() {
   const navigate = useNavigate();
@@ -20,8 +21,7 @@ export function Login() {
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
-    const token = localStorage.getItem("strangr_token");
-    if (token) {
+    if (authToken.get()) {
       navigate("/landing");
     }
   }, [navigate]);
@@ -75,7 +75,7 @@ export function Login() {
           password: formData.password,
         });
 
-        localStorage.setItem("strangr_token", tokenRes.access_token);
+        authToken.set(tokenRes.access_token);
         localStorage.setItem("strangr_user", JSON.stringify({ ...response, loginTime: new Date().toISOString() }));
         
       } else {
@@ -85,10 +85,10 @@ export function Login() {
           password: formData.password,
         });
 
-        localStorage.setItem("strangr_token", tokenRes.access_token);
+        authToken.set(tokenRes.access_token);
 
-        // Fetch user string to store in localstorage
-        const user = await api.getCurrentUser(tokenRes.access_token);
+        // Fetch current user and store in localStorage
+        const user = await api.getCurrentUser();
         localStorage.setItem("strangr_user", JSON.stringify({ ...user, loginTime: new Date().toISOString() }));
       }
       navigate("/landing");
@@ -105,11 +105,10 @@ export function Login() {
       setIsLoading(true);
       try {
         const res = await api.googleLogin(tokenResponse.access_token);
-        console.log(res);
-        localStorage.setItem("strangr_token", res.access_token);
+        authToken.set(res.access_token);
         
-        // Fetch user string to store in localstorage
-        const user = await api.getCurrentUser(res.access_token);
+        // Fetch current user and store in localStorage
+        const user = await api.getCurrentUser();
         localStorage.setItem("strangr_user", JSON.stringify({ ...user, loginTime: new Date().toISOString() }));
         
         navigate("/landing");

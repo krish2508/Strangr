@@ -1,13 +1,12 @@
 import { Navigate } from "react-router";
+import { authToken } from "../authToken";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const token = localStorage.getItem("strangr_token");
-
-  if (!token) {
+  if (!authToken.get()) {
     // If no token exists, redirect to login page
     return <Navigate to="/" replace />;
   }

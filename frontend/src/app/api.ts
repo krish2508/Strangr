@@ -1,70 +1,24 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5050";
+import axiosInstance from "./axiosInstance";
 
 export const api = {
   async register(data: { name: string; email: string; password: string }) {
-    const response = await fetch(`${API_BASE_URL}/register`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || "Registration failed");
-    }
-
-    return response.json();
+    const res = await axiosInstance.post("/register", data);
+    return res.data;
   },
 
   async googleLogin(token: string) {
-    const response = await fetch(`${API_BASE_URL}/auth/google`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ token }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || "Google Login failed");
-    }
-
-    return response.json();
+    const res = await axiosInstance.post("/auth/google", { token });
+    return res.data;
   },
 
   async login(data: { email: string; password: string }) {
-    const response = await fetch(`${API_BASE_URL}/login`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || "Login failed");
-    }
-
-    return response.json(); // { access_token, refresh_token, token_type }
+    const res = await axiosInstance.post("/login", data);
+    return res.data; // { access_token, refresh_token, token_type }
   },
 
-  async getCurrentUser(token: string) {
-    const response = await fetch(`${API_BASE_URL}/users/me`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || "Failed to fetch user");
-    }
-
-    return response.json();
-  }
+  async getCurrentUser() {
+    // Token is automatically injected by the Axios interceptor
+    const res = await axiosInstance.get("/users/me");
+    return res.data;
+  },
 };

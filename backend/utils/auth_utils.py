@@ -1,6 +1,6 @@
 import os
-from datetime import datetime, timedelta
-from typing import Annotated
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Optional
 from jose import JWTError, jwt
 import bcrypt
 from fastapi import Depends, HTTPException, status
@@ -13,72 +13,85 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "b39a7b6c5e8f498a3b53f6a6296d8bd214fc6616428bc5fbb5c72e27caba93fa")
+SECRET_KEY = os.getenv("SECRET_KEY", "changeme-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plaintext password against a bcrypt hash."""
+    if not hashed_password:
+        return False
     try:
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
     except Exception as e:
-        logger.error(f"Password verification encountered an error: {str(e)}")
+        logger.error(f"Password verification encountered an error: {e}")
         return False
 
-def get_password_hash(password: str) -> str:
-    logger.debug("Generating password hash")
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    logger.debug(f"Creating access token for payload: {data}")
+def get_password_hash(password: str) -> str:
+    """Hash a plaintext password using bcrypt."""
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT access token."""
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode["exp"] = expire
+    encoded = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    logger.debug(f"Access token created for subject: {data.get('sub')}")
+    return encoded
+
 
 def create_refresh_token(data: dict) -> str:
-    logger.debug(f"Creating refresh token for payload: {data}")
+    """Create a signed JWT refresh token."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode["exp"] = expire
+    encoded = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    logger.debug(f"Refresh token created for subject: {data.get('sub')}")
+    return encoded
 
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: AsyncSession = Depends(get_db)):
+
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Dependency that decodes a JWT and returns the authenticated user."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
+        email: Optional[str] = payload.get("sub")
         if email is None:
-            logger.warning("Token decoding failed: Subject missing from payload")
+            logger.warning("Token rejected: missing 'sub' field in payload")
             raise credentials_exception
     except JWTError as e:
-        logger.warning(f"Token decoding failed: JWTError: {str(e)}")
+        logger.warning(f"Token rejected: JWTError — {e}")
         raise credentials_exception
     except Exception as e:
-        logger.error(f"Unexpected error during token decoding: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error during token decoding")
-    
+        logger.error(f"Unexpected error decoding token: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error during token validation")
+
     try:
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalars().first()
     except Exception as e:
-        logger.error(f"Database error while fetching parsed user {email}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Database connection error")
-    
+        logger.error(f"Database error while fetching user '{email}': {e}")
+        raise HTTPException(status_code=500, detail="Database error")
+
     if user is None:
-        logger.warning(f"Token decoded but user {email} not found in database")
+        logger.warning(f"Token valid but user '{email}' not found in database")
         raise credentials_exception
-        
-    logger.debug(f"Token validated successfully for user: {email}")
+
+    logger.debug(f"Authenticated user: {email}")
     return user
