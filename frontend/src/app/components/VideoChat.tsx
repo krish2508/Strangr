@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { useNavigate, useLocation } from "react-router";
+import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router";
 import {
   Mic,
   MicOff,
@@ -13,73 +13,46 @@ import {
   Send,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-
-interface Message {
-  id: string;
-  text: string;
-  sender: "you" | "stranger";
-  timestamp: Date;
-}
-
-const STRANGER_RESPONSES = [
-  "Hey! Nice to see you!",
-  "Hello there!",
-  "How are you doing?",
-  "Cool setup!",
-  "Where are you from?",
-  "This is fun!",
-  "What's up?",
-  "Nice to meet you!",
-  "How's your day going?",
-  "What do you like to do?",
-];
+import { useChat } from "../hooks/useChat";
+import { Matching } from "./Matching";
 
 export function VideoChat() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputValue, setInputValue] = useState("");
   const [showChat, setShowChat] = useState(false);
+  const [inputValue, setInputValue] = useState("");
   const [micEnabled, setMicEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
-  const [strangerConnected, setStrangerConnected] = useState(true);
-  const [strangerVideo, setStrangerVideo] = useState(true);
+  const [strangerVideo] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
+  const { messages, strangerTyping, strangerConnected, isSearching, sendMessage, sendTyping, sendNext } =
+    useChat();
+
+  // Debounced typing indicator
+  const typingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputValue(e.target.value);
+    if (!strangerConnected) return;
+    if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+    typingDebounceRef.current = setTimeout(() => {
+      sendTyping();
+    }, 300);
+  };
+
+  // Start local video on mount
   useEffect(() => {
-    // Start local video stream
     const startVideo = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-      } catch (err) {
-        console.log("Camera access denied or not available - using placeholder");
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      } catch {
+        console.log("Camera access denied or not available");
       }
     };
-
     startVideo();
 
-    // Initial stranger message
-    const timer = setTimeout(() => {
-      setMessages([
-        {
-          id: Date.now().toString(),
-          text: "Stranger has joined the video chat!",
-          sender: "stranger",
-          timestamp: new Date(),
-        },
-      ]);
-    }, 1000);
-
     return () => {
-      clearTimeout(timer);
-      // Cleanup video stream
       if (localVideoRef.current?.srcObject) {
         const stream = localVideoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
@@ -87,83 +60,42 @@ export function VideoChat() {
     };
   }, []);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || !strangerConnected) return;
-
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      text: inputValue,
-      sender: "you",
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, newMessage]);
+    if (!strangerConnected) return;
+    const text = inputValue.trim();
+    if (!text) return;
+    sendMessage(text);
     setInputValue("");
-
-    // Simulate stranger response
-    setTimeout(() => {
-      const response =
-        STRANGER_RESPONSES[
-          Math.floor(Math.random() * STRANGER_RESPONSES.length)
-        ];
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          text: response,
-          sender: "stranger",
-          timestamp: new Date(),
-        },
-      ]);
-    }, 2000 + Math.random() * 2000);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const toggleMic = () => {
-    setMicEnabled(!micEnabled);
-    if (localVideoRef.current?.srcObject) {
-      const stream = localVideoRef.current.srcObject as MediaStream;
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = !micEnabled;
-      });
-    }
+    setMicEnabled((prev) => {
+      if (localVideoRef.current?.srcObject) {
+        const stream = localVideoRef.current.srcObject as MediaStream;
+        stream.getAudioTracks().forEach((t) => (t.enabled = prev));
+      }
+      return !prev;
+    });
   };
 
   const toggleVideo = () => {
-    setVideoEnabled(!videoEnabled);
-    if (localVideoRef.current?.srcObject) {
-      const stream = localVideoRef.current.srcObject as MediaStream;
-      stream.getVideoTracks().forEach((track) => {
-        track.enabled = !videoEnabled;
-      });
-    }
+    setVideoEnabled((prev) => {
+      if (localVideoRef.current?.srcObject) {
+        const stream = localVideoRef.current.srcObject as MediaStream;
+        stream.getVideoTracks().forEach((t) => (t.enabled = prev));
+      }
+      return !prev;
+    });
   };
 
   const handleSkip = () => {
-    setStrangerConnected(false);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: Date.now().toString(),
-        text: "Stranger has disconnected.",
-        sender: "stranger",
-        timestamp: new Date(),
-      },
-    ]);
-
-    // Clean up video stream before navigating
+    sendNext();
     if (localVideoRef.current?.srcObject) {
       const stream = localVideoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
     }
-
-    setTimeout(() => {
-      navigate("/matching", { state: { ...location.state, mode: "video" } });
-    }, 1500);
   };
 
   const handleStop = () => {
@@ -173,6 +105,9 @@ export function VideoChat() {
     }
     navigate("/landing");
   };
+
+  if (isSearching) {
+    return <Matching onCancel={handleStop} />;}
 
   return (
     <div className="h-screen flex flex-col bg-gray-900">
@@ -189,13 +124,11 @@ export function VideoChat() {
           </div>
           <div className="flex items-center gap-2">
             <Circle
-              className={`w-3 h-3 ${
-                strangerConnected ? "text-green-400" : "text-red-400"
-              }`}
+              className={`w-3 h-3 ${strangerConnected ? "text-green-400" : "text-yellow-300"}`}
               fill="currentColor"
             />
             <span className="text-sm">
-              {strangerConnected ? "Connected" : "Disconnected"}
+              {strangerConnected ? "Connected" : "Finding stranger..."}
             </span>
           </div>
         </div>
@@ -207,16 +140,13 @@ export function VideoChat() {
         <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
           {strangerConnected && strangerVideo ? (
             <div className="w-full h-full relative bg-gradient-to-br from-purple-900 to-pink-900">
-              {/* Simulated stranger video - you can replace with actual video element */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
                   <div className="w-32 h-32 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full mx-auto mb-4 flex items-center justify-center">
                     <span className="text-5xl">👤</span>
                   </div>
                   <p className="text-white text-xl font-medium">Stranger</p>
-                  <p className="text-white/70 text-sm mt-2">
-                    Video chat in progress...
-                  </p>
+                  <p className="text-white/70 text-sm mt-2">Video chat in progress...</p>
                 </div>
               </div>
             </div>
@@ -224,9 +154,7 @@ export function VideoChat() {
             <div className="text-center text-white">
               <VideoOff className="w-16 h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-xl">
-                {strangerConnected
-                  ? "Stranger's camera is off"
-                  : "Waiting for stranger..."}
+                Stranger's camera is off
               </p>
             </div>
           )}
@@ -234,17 +162,11 @@ export function VideoChat() {
           {/* Your Video (Picture-in-Picture) */}
           <motion.div
             drag
-            dragMOmentum={false}
+            dragMomentum={false}
             className="absolute bottom-6 right-6 w-64 h-48 bg-gray-700 rounded-2xl overflow-hidden shadow-2xl cursor-move"
           >
             {videoEnabled ? (
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="w-full h-full object-cover"
-              />
+              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gray-800">
                 <div className="text-center">
@@ -285,17 +207,14 @@ export function VideoChat() {
                 {messages.map((message) => (
                   <div
                     key={message.id}
-                    className={`flex ${
-                      message.sender === "you" ? "justify-end" : "justify-start"
-                    }`}
+                    className={`flex ${message.sender === "you" ? "justify-end" : "justify-start"}`}
                   >
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2 ${
                         message.sender === "you"
                           ? "bg-purple-600 text-white"
-                          : message.text.includes("joined") ||
-                            message.text.includes("disconnected")
-                          ? "bg-gray-200 text-gray-700 text-sm italic"
+                          : message.sender === "system"
+                          ? "bg-gray-200 text-gray-600 text-sm italic"
                           : "bg-gray-100 text-gray-800"
                       }`}
                     >
@@ -303,6 +222,32 @@ export function VideoChat() {
                     </div>
                   </div>
                 ))}
+
+                {/* Typing Indicator */}
+                <AnimatePresence>
+                  {strangerTyping && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="flex justify-start"
+                    >
+                      <div className="bg-gray-100 rounded-2xl px-4 py-2">
+                        <div className="flex gap-1">
+                          {[0, 0.2, 0.4].map((delay) => (
+                            <motion.div
+                              key={delay}
+                              animate={{ opacity: [0.4, 1, 0.4] }}
+                              transition={{ duration: 1, repeat: Infinity, delay }}
+                              className="w-2 h-2 bg-gray-500 rounded-full"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 <div ref={messagesEndRef} />
               </div>
 
@@ -312,14 +257,14 @@ export function VideoChat() {
                   <input
                     type="text"
                     value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Type a message..."
+                    onChange={handleInputChange}
                     disabled={!strangerConnected}
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-600 disabled:bg-gray-100"
+                    placeholder="Type a message..."
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-600"
                   />
                   <button
                     type="submit"
-                    disabled={!inputValue.trim() || !strangerConnected}
+                    disabled={!strangerConnected || !inputValue.trim()}
                     className="bg-purple-600 text-white p-2 rounded-full hover:bg-purple-700 transition-colors disabled:bg-gray-300"
                   >
                     <Send className="w-5 h-5" />
@@ -341,16 +286,10 @@ export function VideoChat() {
               whileTap={{ scale: 0.9 }}
               onClick={toggleMic}
               className={`p-4 rounded-full transition-colors ${
-                micEnabled
-                  ? "bg-gray-700 hover:bg-gray-600 text-white"
-                  : "bg-red-500 hover:bg-red-600 text-white"
+                micEnabled ? "bg-gray-700 hover:bg-gray-600 text-white" : "bg-red-500 hover:bg-red-600 text-white"
               }`}
             >
-              {micEnabled ? (
-                <Mic className="w-6 h-6" />
-              ) : (
-                <MicOff className="w-6 h-6" />
-              )}
+              {micEnabled ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
             </motion.button>
 
             <motion.button
@@ -358,16 +297,10 @@ export function VideoChat() {
               whileTap={{ scale: 0.9 }}
               onClick={toggleVideo}
               className={`p-4 rounded-full transition-colors ${
-                videoEnabled
-                  ? "bg-gray-700 hover:bg-gray-600 text-white"
-                  : "bg-red-500 hover:bg-red-600 text-white"
+                videoEnabled ? "bg-gray-700 hover:bg-gray-600 text-white" : "bg-red-500 hover:bg-red-600 text-white"
               }`}
             >
-              {videoEnabled ? (
-                <Video className="w-6 h-6" />
-              ) : (
-                <VideoOff className="w-6 h-6" />
-              )}
+              {videoEnabled ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
             </motion.button>
 
             <motion.button
@@ -375,9 +308,7 @@ export function VideoChat() {
               whileTap={{ scale: 0.9 }}
               onClick={() => setShowChat(!showChat)}
               className={`p-4 rounded-full transition-colors ${
-                showChat
-                  ? "bg-purple-600 text-white"
-                  : "bg-gray-700 hover:bg-gray-600 text-white"
+                showChat ? "bg-purple-600 text-white" : "bg-gray-700 hover:bg-gray-600 text-white"
               }`}
             >
               <MessageSquare className="w-6 h-6" />
@@ -408,7 +339,7 @@ export function VideoChat() {
           </div>
 
           {/* Right Spacer */}
-          <div className="w-32"></div>
+          <div className="w-32" />
         </div>
       </div>
     </div>

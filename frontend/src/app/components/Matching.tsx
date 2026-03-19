@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router";
 import { Loader2, Zap, Users } from "lucide-react";
 import { motion } from "motion/react";
 
-export function Matching() {
-  const navigate = useNavigate();
-  const location = useLocation();
+interface MatchingProps {
+  onCancel: () => void;
+}
+
+export function Matching({ onCancel }: MatchingProps) {
   const [dots, setDots] = useState("");
   const [status, setStatus] = useState("Looking for strangers");
 
@@ -15,12 +16,10 @@ export function Matching() {
       setDots(prev => (prev.length >= 3 ? "" : prev + "."));
     }, 500);
 
-    // Simulate matching process
     const statuses = [
       "Looking for strangers",
-      "Found 127 users online",
-      "Matching based on interests",
-      "Connecting you now"
+      "Finding online users",
+      "Matching based on interests"
     ];
 
     let currentIndex = 0;
@@ -28,25 +27,17 @@ export function Matching() {
       currentIndex++;
       if (currentIndex < statuses.length) {
         setStatus(statuses[currentIndex]);
-      }
-    }, 1500);
-
-    // Navigate to appropriate chat based on mode
-    const matchTimeout = setTimeout(() => {
-      const mode = location.state?.mode || "text";
-      if (mode === "video") {
-        navigate("/video-chat", { state: location.state });
       } else {
-        navigate("/chat", { state: location.state });
+        currentIndex = 0;
+        setStatus(statuses[currentIndex]);
       }
-    }, 6000);
+    }, 2000);
 
     return () => {
       clearInterval(dotsInterval);
       clearInterval(statusInterval);
-      clearTimeout(matchTimeout);
     };
-  }, [navigate, location.state]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-red-500 flex flex-col items-center justify-center px-6">
@@ -98,7 +89,7 @@ export function Matching() {
         <motion.button
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          onClick={() => navigate("/")}
+          onClick={onCancel}
           className="mt-8 bg-white/20 text-white px-8 py-3 rounded-full font-medium hover:bg-white/30 transition-all"
         >
           Cancel

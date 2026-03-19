@@ -2,7 +2,7 @@ import { createBrowserRouter } from "react-router";
 import { Login } from "./components/Login";
 import { Landing } from "./components/Landing";
 import { Onboarding } from "./components/Onboarding";
-import { Matching } from "./components/Matching";
+import { Navigate } from "react-router";
 import { Chat } from "./components/Chat";
 import { VideoChat } from "./components/VideoChat";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -30,11 +30,7 @@ export const router = createBrowserRouter([
   },
   {
     path: "/matching",
-    element: (
-      <ProtectedRoute>
-        <Matching />
-      </ProtectedRoute>
-    ),
+    element: <Navigate to="/landing" replace />,
   },
   {
     path: "/chat",

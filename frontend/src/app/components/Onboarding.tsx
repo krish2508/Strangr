@@ -24,7 +24,8 @@ export function Onboarding() {
   };
 
   const handleStart = () => {
-    navigate("/matching", { state: { interests: selectedInterests, mode: chatMode } });
+    const route = chatMode === "video" ? "/video-chat" : "/chat";
+    navigate(route, { state: { interests: selectedInterests, mode: chatMode } });
   };
 
   return (

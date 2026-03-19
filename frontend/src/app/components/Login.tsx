@@ -56,7 +56,7 @@ export function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setServerError("");
-    
+
     if (!validateForm()) return;
 
     setIsLoading(true);
@@ -68,7 +68,7 @@ export function Login() {
           email: formData.email,
           password: formData.password,
         });
-        
+
         // Auto login after register
         const tokenRes = await api.login({
           email: formData.email,
@@ -77,7 +77,7 @@ export function Login() {
 
         authToken.set(tokenRes.access_token);
         localStorage.setItem("strangr_user", JSON.stringify({ ...response, loginTime: new Date().toISOString() }));
-        
+
       } else {
         // Login user
         const tokenRes = await api.login({
@@ -106,11 +106,11 @@ export function Login() {
       try {
         const res = await api.googleLogin(tokenResponse.access_token);
         authToken.set(res.access_token);
-        
+
         // Fetch current user and store in localStorage
         const user = await api.getCurrentUser();
         localStorage.setItem("strangr_user", JSON.stringify({ ...user, loginTime: new Date().toISOString() }));
-        
+
         navigate("/landing");
       } catch (err: any) {
         setServerError(err.message || "Google Login failed");
