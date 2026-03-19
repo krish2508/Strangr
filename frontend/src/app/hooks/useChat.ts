@@ -76,28 +76,7 @@ export function useChat(): UseChatReturn {
           const systemText =
             typeof data.message === "string" ? data.message : String(data.message ?? "");
 
-          // #region agent log
-          fetch("http://127.0.0.1:7457/ingest/d9e423e6-7094-4ffe-89e4-f1566c21caff", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Debug-Session-Id": "341329",
-            },
-            body: JSON.stringify({
-              sessionId: "341329",
-              runId: "pre-fix",
-              hypothesisId: "H5",
-              location: "frontend/src/app/hooks/useChat.ts:system_handler",
-              message: "system_message_received",
-              data: {
-                systemText,
-                // State values are best-effort; we only need ordering/branch info.
-                prevStrangerConnected: strangerConnected,
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-          // #endregion
+
 
           const lower = systemText.toLowerCase();
           const isDisconnect = lower.includes("disconnected");
@@ -159,24 +138,7 @@ export function useChat(): UseChatReturn {
 
   const sendNext = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      // #region agent log
-      fetch("http://127.0.0.1:7457/ingest/d9e423e6-7094-4ffe-89e4-f1566c21caff", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "341329",
-        },
-        body: JSON.stringify({
-          sessionId: "341329",
-          runId: "pre-fix",
-          hypothesisId: "H6",
-          location: "frontend/src/app/hooks/useChat.ts:sendNext",
-          message: "next_clicked_send_to_ws",
-          data: { userId },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
+
 
       wsRef.current.send(JSON.stringify({ type: "next" }));
     }

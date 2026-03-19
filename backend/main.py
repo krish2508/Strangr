@@ -24,39 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Debug instrumentation (NDJSON)
-# ---------------------------------------------------------------------------
-import json
-import time
 
-# Debug session log file (inside repo/workspace)
-DEBUG_LOG_PATH = r"d:\coding stuff\strangr\debug-341329.log"
-
-
-def _debug_ndjson(
-    hypothesisId: str,
-    location: str,
-    message: str,
-    data: dict | None = None,
-) -> None:
-    try:
-        payload = {
-            "sessionId": "341329",
-            "runId": "pre-fix",
-            "hypothesisId": hypothesisId,
-            "location": location,
-            "message": message,
-            "data": data or {},
-            "timestamp": int(time.time() * 1000),
-        }
-        log_id = f"log_{time.time_ns()}"
-        payload["id"] = log_id
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        # Never break prod behavior due to debug logging.
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +89,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
             await ws1.send_json({"type": "system", "message": "Matched with a stranger"})
         if ws2:
             await ws2.send_json({"type": "system", "message": "Matched with a stranger"})
-        _debug_ndjson(
-            hypothesisId="H1",
-            location="backend/main.py:match_init_send_matched",
-            message="matched_initial",
-            data={"user1": user1, "user2": user2},
-        )
+
 
     try:
         while True:
@@ -149,12 +112,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
                         })
                     except Exception:
                         pass
-                _debug_ndjson(
-                    hypothesisId="H2",
-                    location="backend/main.py:next_send_stranger_disconnected",
-                    message="stranger_disconnected_to_partner",
-                    data={"from_user": user_id, "partner_id": partner_id},
-                )
+
 
                 remove_session(user_id)
                 matchmaker.add_user(user_id)
@@ -168,12 +126,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
                         await ws1.send_json({"type": "system", "message": "Matched with a stranger"})
                     if ws2:
                         await ws2.send_json({"type": "system", "message": "Matched with a stranger"})
-                    _debug_ndjson(
-                        hypothesisId="H3",
-                        location="backend/main.py:next_send_matched",
-                        message="matched_after_next",
-                        data={"user1": user1, "user2": user2, "trigger_user": user_id},
-                    )
+
 
             else:
                 # For chat/typing we need a partner mapping.
@@ -209,12 +162,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
                     })
                 except Exception:
                     pass  # Partner may have already disconnected
-                _debug_ndjson(
-                    hypothesisId="H4",
-                    location="backend/main.py:disconnect_send_stranger_disconnected",
-                    message="stranger_disconnected_to_partner_on_disconnect",
-                    data={"from_user": user_id, "partner_id": partner_id},
-                )
+
 
     except Exception as e:
         logger.error(f"Unexpected WebSocket error for user {user_id}: {e}")
