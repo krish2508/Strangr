@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Mic,
@@ -11,10 +11,37 @@ import {
   Circle,
   MessageSquare,
   Send,
+  AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { useChat } from "../hooks/useChat";
 import { Matching } from "./Matching";
+import { MediaState, useChat } from "../hooks/useChat";
+
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+
+function getIceServers(): RTCIceServer[] {
+  const raw = import.meta.env.VITE_WEBRTC_ICE_SERVERS;
+  if (!raw) return DEFAULT_ICE_SERVERS;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_ICE_SERVERS;
+  } catch {
+    console.warn("Invalid VITE_WEBRTC_ICE_SERVERS value. Falling back to default STUN server.");
+    return DEFAULT_ICE_SERVERS;
+  }
+}
+
+function remoteStatusLabel(
+  remoteMediaState: MediaState,
+  hasRemoteTracks: boolean,
+  strangerConnected: boolean
+): string {
+  if (!strangerConnected) return "Waiting for stranger";
+  if (!remoteMediaState.videoEnabled) return "Stranger's camera is off";
+  if (!hasRemoteTracks) return "Connecting video call...";
+  return "Video chat in progress...";
+}
 
 export function VideoChat() {
   const navigate = useNavigate();
@@ -22,96 +49,485 @@ export function VideoChat() {
   const [inputValue, setInputValue] = useState("");
   const [micEnabled, setMicEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
-  const [strangerVideo] = useState(true);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [isMediaReady, setIsMediaReady] = useState(false);
+  const [hasRemoteTracks, setHasRemoteTracks] = useState(false);
+  const [hasLocalVideoTrack, setHasLocalVideoTrack] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const localStreamRef = useRef<MediaStream>(new MediaStream());
+  const remoteStreamRef = useRef<MediaStream>(new MediaStream());
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const activePartnerRef = useRef<string | null>(null);
+  const audioSenderRef = useRef<RTCRtpSender | null>(null);
+  const videoSenderRef = useRef<RTCRtpSender | null>(null);
+  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
 
-  const { messages, strangerTyping, strangerConnected, isSearching, sendMessage, sendTyping, sendNext } =
-    useChat();
+  const iceServers = useMemo(getIceServers, []);
 
-  // Debounced typing indicator
-  const typingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const {
+    userId,
+    messages,
+    strangerTyping,
+    strangerConnected,
+    isSearching,
+    matchedPartnerId,
+    remoteMediaState,
+    latestSignal,
+    callStatus,
+    connectionError,
+    sendMessage,
+    sendTyping,
+    sendNext,
+    sendSignalMessage,
+    sendMediaState,
+    updateCallStatus,
+  } = useChat("video");
+
+  const syncLocalVideoState = useCallback(() => {
+    const hasActiveVideoTrack = localStreamRef.current
+      .getVideoTracks()
+      .some((track) => track.readyState === "live");
+    setHasLocalVideoTrack(hasActiveVideoTrack);
+  }, []);
+
+  const attachStreamToVideo = useCallback(async (videoEl: HTMLVideoElement | null, stream: MediaStream) => {
+    if (!videoEl) return;
+
+    if (videoEl.srcObject !== stream) {
+      videoEl.srcObject = stream;
+    }
+
+    try {
+      await videoEl.play();
+    } catch {
+      // Autoplay can be deferred by the browser until the element is ready.
+    }
+  }, []);
+
+  const attachLocalStream = useCallback(() => {
+    void attachStreamToVideo(localVideoRef.current, localStreamRef.current);
+  }, [attachStreamToVideo]);
+
+  const attachRemoteStream = useCallback(() => {
+    void attachStreamToVideo(remoteVideoRef.current, remoteStreamRef.current);
+  }, [attachStreamToVideo]);
+
+  const resetRemoteStream = useCallback(() => {
+    remoteStreamRef.current.getTracks().forEach((track) => track.stop());
+    remoteStreamRef.current = new MediaStream();
+    setHasRemoteTracks(false);
+    attachRemoteStream();
+  }, [attachRemoteStream]);
+
+  const stopLocalMedia = useCallback(() => {
+    localStreamRef.current.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = new MediaStream();
+    audioSenderRef.current = null;
+    videoSenderRef.current = null;
+    setIsMediaReady(false);
+    setHasLocalVideoTrack(false);
+    attachLocalStream();
+  }, [attachLocalStream]);
+
+  const cleanupPeerConnection = useCallback(() => {
+    pendingIceCandidatesRef.current = [];
+
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.onicecandidate = null;
+      peerConnectionRef.current.ontrack = null;
+      peerConnectionRef.current.onconnectionstatechange = null;
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
+    activePartnerRef.current = null;
+    audioSenderRef.current = null;
+    videoSenderRef.current = null;
+    resetRemoteStream();
+  }, [resetRemoteStream]);
+
+  const initializeLocalMedia = useCallback(async () => {
+    try {
+      stopLocalMedia();
+      setDeviceError(null);
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+
+      localStreamRef.current = stream;
+      setMicEnabled(true);
+      setVideoEnabled(true);
+      setIsMediaReady(true);
+      syncLocalVideoState();
+      attachLocalStream();
+    } catch {
+      setDeviceError("Camera and microphone access is required to start video chat.");
+      setMicEnabled(false);
+      setVideoEnabled(false);
+      setIsMediaReady(false);
+      setHasLocalVideoTrack(false);
+      updateCallStatus("error");
+    }
+  }, [attachLocalStream, stopLocalMedia, syncLocalVideoState, updateCallStatus]);
+
+  const syncLocalTracksToPeer = useCallback((pc: RTCPeerConnection) => {
+    audioSenderRef.current = null;
+    videoSenderRef.current = null;
+
+    localStreamRef.current.getTracks().forEach((track) => {
+      const sender = pc.addTrack(track, localStreamRef.current);
+      if (track.kind === "audio") {
+        audioSenderRef.current = sender;
+      } else if (track.kind === "video") {
+        videoSenderRef.current = sender;
+      }
+    });
+  }, []);
+
+  const flushPendingIceCandidates = useCallback(async () => {
+    if (!peerConnectionRef.current || !peerConnectionRef.current.remoteDescription) return;
+
+    const queuedCandidates = [...pendingIceCandidatesRef.current];
+    pendingIceCandidatesRef.current = [];
+
+    for (const candidate of queuedCandidates) {
+      try {
+        await peerConnectionRef.current.addIceCandidate(candidate);
+      } catch {
+        console.warn("Failed to apply queued ICE candidate.");
+      }
+    }
+  }, []);
+
+  const createOfferForPeer = useCallback(async (pc: RTCPeerConnection) => {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    if (pc.localDescription) {
+      sendSignalMessage({
+        type: "webrtc-offer",
+        sdp: {
+          type: pc.localDescription.type,
+          sdp: pc.localDescription.sdp ?? "",
+        },
+      });
+    }
+  }, [sendSignalMessage]);
+
+  const createPeerConnection = useCallback((partnerId: string) => {
+    const pc = new RTCPeerConnection({ iceServers });
+    peerConnectionRef.current = pc;
+    activePartnerRef.current = partnerId;
+    pendingIceCandidatesRef.current = [];
+    resetRemoteStream();
+    syncLocalTracksToPeer(pc);
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        sendSignalMessage({
+          type: "webrtc-ice-candidate",
+          candidate: {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            usernameFragment: event.candidate.usernameFragment ?? undefined,
+          },
+        });
+      }
+    };
+
+    pc.ontrack = (event) => {
+      const [stream] = event.streams;
+
+      if (stream) {
+        stream.getTracks().forEach((track) => {
+          const exists = remoteStreamRef.current.getTracks().some((remoteTrack) => remoteTrack.id === track.id);
+          if (!exists) {
+            remoteStreamRef.current.addTrack(track);
+          }
+        });
+      } else {
+        const exists = remoteStreamRef.current.getTracks().some((track) => track.id === event.track.id);
+        if (!exists) {
+          remoteStreamRef.current.addTrack(event.track);
+        }
+      }
+
+      setHasRemoteTracks(remoteStreamRef.current.getTracks().length > 0);
+      attachRemoteStream();
+    };
+
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+
+      if (state === "connected") {
+        updateCallStatus("connected");
+      } else if (state === "connecting") {
+        updateCallStatus("connecting");
+      } else if (state === "disconnected" || state === "failed" || state === "closed") {
+        updateCallStatus("ended");
+        setHasRemoteTracks(false);
+      }
+    };
+
+    return pc;
+  }, [attachRemoteStream, iceServers, resetRemoteStream, sendSignalMessage, syncLocalTracksToPeer, updateCallStatus]);
+
+  const ensurePeerConnection = useCallback((partnerId: string) => {
+    if (peerConnectionRef.current && activePartnerRef.current === partnerId) {
+      return peerConnectionRef.current;
+    }
+
+    cleanupPeerConnection();
+    return createPeerConnection(partnerId);
+  }, [cleanupPeerConnection, createPeerConnection]);
+
+  const startNegotiationIfReady = useCallback(async () => {
+    if (!matchedPartnerId || isSearching || !strangerConnected) return;
+
+    if (!isMediaReady || deviceError) {
+      updateCallStatus("error");
+      return;
+    }
+
+    const pc = ensurePeerConnection(matchedPartnerId);
+    updateCallStatus("connecting");
+    sendMediaState({
+      audioEnabled: micEnabled,
+      videoEnabled,
+    });
+
+    if (userId.localeCompare(matchedPartnerId) < 0 && !pc.localDescription) {
+      await createOfferForPeer(pc);
+    }
+  }, [
+    matchedPartnerId,
+    isSearching,
+    strangerConnected,
+    isMediaReady,
+    deviceError,
+    ensurePeerConnection,
+    updateCallStatus,
+    sendMediaState,
+    micEnabled,
+    videoEnabled,
+    userId,
+    createOfferForPeer,
+  ]);
+
+  useEffect(() => {
+    attachLocalStream();
+    attachRemoteStream();
+  }, [attachLocalStream, attachRemoteStream]);
+
+  useEffect(() => {
+    void initializeLocalMedia();
+
+    return () => {
+      cleanupPeerConnection();
+      stopLocalMedia();
+    };
+  }, [cleanupPeerConnection, initializeLocalMedia, stopLocalMedia]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, strangerTyping]);
+
+  useEffect(() => {
+    if (!matchedPartnerId) {
+      cleanupPeerConnection();
+      return;
+    }
+
+    void startNegotiationIfReady();
+  }, [cleanupPeerConnection, matchedPartnerId, startNegotiationIfReady]);
+
+  useEffect(() => {
+    if (!matchedPartnerId || !strangerConnected || !isMediaReady) return;
+
+    sendMediaState({
+      audioEnabled: micEnabled,
+      videoEnabled,
+    });
+  }, [matchedPartnerId, strangerConnected, isMediaReady, micEnabled, videoEnabled, sendMediaState]);
+
+  useEffect(() => {
+    if (!latestSignal || !matchedPartnerId || latestSignal.fromUserId !== matchedPartnerId) {
+      return;
+    }
+
+    const handleSignal = async () => {
+      if (latestSignal.type === "call-end") {
+        cleanupPeerConnection();
+        setHasRemoteTracks(false);
+        updateCallStatus("ended");
+        return;
+      }
+
+      const pc = ensurePeerConnection(matchedPartnerId);
+
+      if (latestSignal.type === "webrtc-offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
+        await flushPendingIceCandidates();
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        if (pc.localDescription) {
+          sendSignalMessage({
+            type: "webrtc-answer",
+            sdp: {
+              type: pc.localDescription.type,
+              sdp: pc.localDescription.sdp ?? "",
+            },
+          });
+        }
+      } else if (latestSignal.type === "webrtc-answer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
+        await flushPendingIceCandidates();
+      } else if (latestSignal.type === "webrtc-ice-candidate") {
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(latestSignal.candidate));
+        } else {
+          pendingIceCandidatesRef.current.push(latestSignal.candidate);
+        }
+      }
+    };
+
+    void handleSignal();
+  }, [
+    cleanupPeerConnection,
+    ensurePeerConnection,
+    flushPendingIceCandidates,
+    latestSignal,
+    matchedPartnerId,
+    sendSignalMessage,
+    updateCallStatus,
+  ]);
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(e.target.value);
     if (!strangerConnected) return;
-    if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
-    typingDebounceRef.current = setTimeout(() => {
-      sendTyping();
-    }, 300);
+
+    sendTyping();
   };
-
-  // Start local video on mount
-  useEffect(() => {
-    const startVideo = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      } catch {
-        console.log("Camera access denied or not available");
-      }
-    };
-    startVideo();
-
-    return () => {
-      if (localVideoRef.current?.srcObject) {
-        const stream = localVideoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!strangerConnected) return;
+
     const text = inputValue.trim();
     if (!text) return;
+
     sendMessage(text);
     setInputValue("");
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const toggleMic = () => {
-    setMicEnabled((prev) => {
-      if (localVideoRef.current?.srcObject) {
-        const stream = localVideoRef.current.srcObject as MediaStream;
-        stream.getAudioTracks().forEach((t) => (t.enabled = prev));
-      }
-      return !prev;
+    const nextEnabled = !micEnabled;
+    localStreamRef.current.getAudioTracks().forEach((track) => {
+      track.enabled = nextEnabled;
     });
-  };
+    setMicEnabled(nextEnabled);
 
-  const toggleVideo = () => {
-    setVideoEnabled((prev) => {
-      if (localVideoRef.current?.srcObject) {
-        const stream = localVideoRef.current.srcObject as MediaStream;
-        stream.getVideoTracks().forEach((t) => (t.enabled = prev));
-      }
-      return !prev;
-    });
-  };
-
-  const handleSkip = () => {
-    sendNext();
-    if (localVideoRef.current?.srcObject) {
-      const stream = localVideoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
+    if (matchedPartnerId) {
+      sendMediaState({
+        audioEnabled: nextEnabled,
+        videoEnabled,
+      });
     }
+  };
+
+  const toggleVideo = async () => {
+    if (!matchedPartnerId && !isMediaReady && !videoEnabled) {
+      await initializeLocalMedia();
+      return;
+    }
+
+    if (videoEnabled) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
+        localStreamRef.current.removeTrack(track);
+        track.stop();
+      });
+
+      if (videoSenderRef.current) {
+        await videoSenderRef.current.replaceTrack(null);
+      }
+
+      setVideoEnabled(false);
+      setHasLocalVideoTrack(false);
+
+      sendMediaState({
+        audioEnabled: micEnabled,
+        videoEnabled: false,
+      });
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const [newTrack] = stream.getVideoTracks();
+
+      if (!newTrack) {
+        throw new Error("No video track available");
+      }
+
+      localStreamRef.current.addTrack(newTrack);
+      syncLocalVideoState();
+
+      if (peerConnectionRef.current) {
+        if (videoSenderRef.current) {
+          await videoSenderRef.current.replaceTrack(newTrack);
+        } else {
+          videoSenderRef.current = peerConnectionRef.current.addTrack(newTrack, localStreamRef.current);
+        }
+      }
+
+      attachLocalStream();
+      setVideoEnabled(true);
+      setDeviceError(null);
+
+      sendMediaState({
+        audioEnabled: micEnabled,
+        videoEnabled: true,
+      });
+    } catch {
+      setDeviceError("Camera could not be turned back on. Check browser permissions and device access.");
+      setVideoEnabled(false);
+      setHasLocalVideoTrack(false);
+    }
+  };
+
+  const handleSkip = async () => {
+    cleanupPeerConnection();
+    stopLocalMedia();
+    sendNext();
+    await initializeLocalMedia();
   };
 
   const handleStop = () => {
-    if (localVideoRef.current?.srcObject) {
-      const stream = localVideoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-    }
+    sendSignalMessage({ type: "call-end", reason: "stop" });
+    cleanupPeerConnection();
+    stopLocalMedia();
     navigate("/landing");
   };
 
   if (isSearching) {
-    return <Matching onCancel={handleStop} />;}
+    return <Matching onCancel={handleStop} />;
+  }
+
+  const headerStatus = strangerConnected ? "Connected" : "Waiting to reconnect";
+  const activeError = deviceError || connectionError;
+  const remoteVideoVisible = remoteMediaState.videoEnabled && hasRemoteTracks;
+  const localVideoVisible = videoEnabled && hasLocalVideoTrack;
 
   return (
     <div className="h-screen flex flex-col bg-gray-900">
-      {/* Header */}
       <header className="bg-gradient-to-r from-purple-600 to-pink-500 text-white p-4 shadow-lg z-10">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -122,66 +538,87 @@ export function VideoChat() {
               <span className="text-sm">Video Chat</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Circle
-              className={`w-3 h-3 ${strangerConnected ? "text-green-400" : "text-yellow-300"}`}
-              fill="currentColor"
-            />
-            <span className="text-sm">
-              {strangerConnected ? "Connected" : "Finding stranger..."}
-            </span>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-sm font-medium">{headerStatus}</p>
+              <p className="text-xs text-white/80 capitalize">{callStatus}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Circle
+                className={`w-3 h-3 ${strangerConnected ? "text-green-400" : "text-yellow-300"}`}
+                fill="currentColor"
+              />
+              <span className="text-sm">{strangerConnected ? "Live" : "Standby"}</span>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Video Area */}
       <div className="flex-1 relative overflow-hidden">
-        {/* Stranger Video (Main) */}
-        <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-          {strangerConnected && strangerVideo ? (
-            <div className="w-full h-full relative bg-gradient-to-br from-purple-900 to-pink-900">
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="w-32 h-32 bg-gradient-to-br from-purple-400 to-pink-400 rounded-full mx-auto mb-4 flex items-center justify-center">
-                    <span className="text-5xl">👤</span>
-                  </div>
-                  <p className="text-white text-xl font-medium">Stranger</p>
-                  <p className="text-white/70 text-sm mt-2">Video chat in progress...</p>
+        <div className="absolute inset-0 bg-gray-800">
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className={`absolute inset-0 h-full w-full object-cover ${remoteVideoVisible ? "opacity-100" : "opacity-0"}`}
+          />
+
+          {!remoteVideoVisible && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-purple-950 via-gray-900 to-pink-950">
+              <div className="text-center px-6">
+                <div className="w-24 h-24 bg-white/10 rounded-full mx-auto mb-4 flex items-center justify-center">
+                  <VideoOff className="w-10 h-10 text-gray-300" />
                 </div>
+                <p className="text-white text-xl font-medium">
+                  {remoteStatusLabel(remoteMediaState, hasRemoteTracks, strangerConnected)}
+                </p>
+                <p className="text-white/70 text-sm mt-2">
+                  {remoteMediaState.audioEnabled ? "Audio can still continue while video is off." : "Remote microphone is muted."}
+                </p>
               </div>
-            </div>
-          ) : (
-            <div className="text-center text-white">
-              <VideoOff className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-              <p className="text-xl">
-                Stranger's camera is off
-              </p>
             </div>
           )}
 
-          {/* Your Video (Picture-in-Picture) */}
+          {activeError && (
+            <div className="absolute top-4 left-4 right-4 mx-auto max-w-2xl rounded-2xl border border-amber-400/40 bg-black/60 p-4 text-white backdrop-blur-sm">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-300 mt-0.5" />
+                <div>
+                  <p className="font-medium">Device or connection issue</p>
+                  <p className="text-sm text-white/80">{activeError}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <motion.div
             drag
             dragMomentum={false}
             className="absolute bottom-6 right-6 w-64 h-48 bg-gray-700 rounded-2xl overflow-hidden shadow-2xl cursor-move"
           >
-            {videoEnabled ? (
-              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-800">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className={`w-full h-full object-cover ${localVideoVisible ? "opacity-100" : "opacity-0"}`}
+            />
+
+            {!localVideoVisible && (
+              <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-gray-800">
                 <div className="text-center">
                   <VideoOff className="w-12 h-12 mx-auto mb-2 text-gray-400" />
-                  <p className="text-white text-sm">Camera Off</p>
+                  <p className="text-white text-sm">{videoEnabled ? "Starting camera..." : "Camera Off"}</p>
                 </div>
               </div>
             )}
+
             <div className="absolute bottom-2 left-2 bg-black/50 backdrop-blur-sm px-2 py-1 rounded text-white text-xs">
               You
             </div>
           </motion.div>
         </div>
 
-        {/* Chat Sidebar */}
         <AnimatePresence>
           {showChat && (
             <motion.div
@@ -191,7 +628,6 @@ export function VideoChat() {
               transition={{ type: "spring", damping: 20 }}
               className="absolute right-0 top-0 bottom-0 w-96 bg-white shadow-2xl flex flex-col z-20"
             >
-              {/* Chat Header */}
               <div className="bg-gradient-to-r from-purple-600 to-pink-500 text-white p-4 flex items-center justify-between">
                 <h3 className="font-bold">Chat</h3>
                 <button
@@ -202,7 +638,6 @@ export function VideoChat() {
                 </button>
               </div>
 
-              {/* Messages */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {messages.map((message) => (
                   <div
@@ -214,8 +649,8 @@ export function VideoChat() {
                         message.sender === "you"
                           ? "bg-purple-600 text-white"
                           : message.sender === "system"
-                          ? "bg-gray-200 text-gray-600 text-sm italic"
-                          : "bg-gray-100 text-gray-800"
+                            ? "bg-gray-200 text-gray-600 text-sm italic"
+                            : "bg-gray-100 text-gray-800"
                       }`}
                     >
                       <p className="text-sm">{message.text}</p>
@@ -223,7 +658,6 @@ export function VideoChat() {
                   </div>
                 ))}
 
-                {/* Typing Indicator */}
                 <AnimatePresence>
                   {strangerTyping && (
                     <motion.div
@@ -251,7 +685,6 @@ export function VideoChat() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Chat Input */}
               <div className="border-t p-4">
                 <form onSubmit={handleSendMessage} className="flex gap-2">
                   <input
@@ -276,18 +709,19 @@ export function VideoChat() {
         </AnimatePresence>
       </div>
 
-      {/* Controls Footer */}
       <div className="bg-gray-800 p-6">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          {/* Left Controls */}
           <div className="flex gap-3">
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               onClick={toggleMic}
+              disabled={!isMediaReady}
               className={`p-4 rounded-full transition-colors ${
-                micEnabled ? "bg-gray-700 hover:bg-gray-600 text-white" : "bg-red-500 hover:bg-red-600 text-white"
-              }`}
+                micEnabled
+                  ? "bg-gray-700 hover:bg-gray-600 text-white"
+                  : "bg-red-500 hover:bg-red-600 text-white"
+              } disabled:bg-gray-600 disabled:text-gray-300`}
             >
               {micEnabled ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
             </motion.button>
@@ -295,10 +729,13 @@ export function VideoChat() {
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
-              onClick={toggleVideo}
+              onClick={() => void toggleVideo()}
+              disabled={!isMediaReady && videoEnabled}
               className={`p-4 rounded-full transition-colors ${
-                videoEnabled ? "bg-gray-700 hover:bg-gray-600 text-white" : "bg-red-500 hover:bg-red-600 text-white"
-              }`}
+                videoEnabled
+                  ? "bg-gray-700 hover:bg-gray-600 text-white"
+                  : "bg-red-500 hover:bg-red-600 text-white"
+              } disabled:bg-gray-600 disabled:text-gray-300`}
             >
               {videoEnabled ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
             </motion.button>
@@ -315,12 +752,11 @@ export function VideoChat() {
             </motion.button>
           </div>
 
-          {/* Center Controls */}
           <div className="flex gap-3">
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={handleSkip}
+              onClick={() => void handleSkip()}
               className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-full font-medium flex items-center gap-2 transition-colors"
             >
               <SkipForward className="w-5 h-5" />
@@ -338,8 +774,10 @@ export function VideoChat() {
             </motion.button>
           </div>
 
-          {/* Right Spacer */}
-          <div className="w-32" />
+          <div className="w-40 text-right text-xs text-gray-300">
+            <p>Remote mic: {remoteMediaState.audioEnabled ? "on" : "off"}</p>
+            <p>Remote cam: {remoteMediaState.videoEnabled ? "on" : "off"}</p>
+          </div>
         </div>
       </div>
     </div>

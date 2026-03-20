@@ -2,7 +2,7 @@ import logging
 import logging.config
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from connection_manager import manager
@@ -23,6 +23,35 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+WEBRTC_SIGNAL_TYPES = {
+    "webrtc-offer",
+    "webrtc-answer",
+    "webrtc-ice-candidate",
+    "media-state",
+    "call-end",
+}
+VALID_CHAT_MODES = {"text", "video"}
+
+
+async def notify_matched_users(user1: str, user2: str) -> None:
+    """Send a match notification with partner IDs for WebRTC negotiation."""
+    ws1 = manager.get(user1)
+    ws2 = manager.get(user2)
+
+    if ws1:
+        await ws1.send_json({
+            "type": "system",
+            "message": "Matched with a stranger",
+            "partnerId": user2,
+        })
+
+    if ws2:
+        await ws2.send_json({
+            "type": "system",
+            "message": "Matched with a stranger",
+            "partnerId": user1,
+        })
 
 
 
@@ -74,21 +103,15 @@ app.include_router(auth_routes.router)
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(ws: WebSocket, user_id: str):
+async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(default="text")):
+    chat_mode = mode if mode in VALID_CHAT_MODES else "text"
     await manager.connect(user_id, ws)
-    matchmaker.add_user(user_id)
+    matchmaker.add_user(user_id, chat_mode)
 
-    user1, user2 = matchmaker.match_users()
+    user1, user2 = matchmaker.match_users(chat_mode)
     if user1 and user2:
         create_session(user1, user2)
-        # Notify both matched users immediately.
-        # Frontend uses system messages to flip `strangerConnected` to true.
-        ws1 = manager.get(user1)
-        ws2 = manager.get(user2)
-        if ws1:
-            await ws1.send_json({"type": "system", "message": "Matched with a stranger"})
-        if ws2:
-            await ws2.send_json({"type": "system", "message": "Matched with a stranger"})
+        await notify_matched_users(user1, user2)
 
 
     try:
@@ -107,6 +130,11 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
                 if partner_ws:
                     try:
                         await partner_ws.send_json({
+                            "type": "call-end",
+                            "reason": "next",
+                            "fromUserId": user_id,
+                        })
+                        await partner_ws.send_json({
                             "type": "system",
                             "message": "Stranger disconnected",
                         })
@@ -115,17 +143,12 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
 
 
                 remove_session(user_id)
-                matchmaker.add_user(user_id)
+                matchmaker.add_user(user_id, chat_mode)
 
-                user1, user2 = matchmaker.match_users()
+                user1, user2 = matchmaker.match_users(chat_mode)
                 if user1 and user2:
                     create_session(user1, user2)
-                    ws1 = manager.get(user1)
-                    ws2 = manager.get(user2)
-                    if ws1:
-                        await ws1.send_json({"type": "system", "message": "Matched with a stranger"})
-                    if ws2:
-                        await ws2.send_json({"type": "system", "message": "Matched with a stranger"})
+                    await notify_matched_users(user1, user2)
 
 
             else:
@@ -145,17 +168,28 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
                     })
                 elif msg_type == "typing":
                     await partner_ws.send_json({"type": "typing"})
+                elif msg_type in WEBRTC_SIGNAL_TYPES:
+                    await partner_ws.send_json({
+                        **data,
+                        "fromUserId": user_id,
+                    })
                 else:
                     logger.warning(f"Unknown message type '{msg_type}' from user {user_id}")
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+        matchmaker.remove_user(user_id, chat_mode)
         partner_id = remove_session(user_id)
 
         if partner_id:
             partner_ws = manager.get(partner_id)
             if partner_ws:
                 try:
+                    await partner_ws.send_json({
+                        "type": "call-end",
+                        "reason": "disconnect",
+                        "fromUserId": user_id,
+                    })
                     await partner_ws.send_json({
                         "type": "system",
                         "message": "Stranger disconnected",
@@ -167,4 +201,20 @@ async def websocket_endpoint(ws: WebSocket, user_id: str):
     except Exception as e:
         logger.error(f"Unexpected WebSocket error for user {user_id}: {e}")
         manager.disconnect(user_id)
-        remove_session(user_id)
+        matchmaker.remove_user(user_id, chat_mode)
+        partner_id = remove_session(user_id)
+        if partner_id:
+            partner_ws = manager.get(partner_id)
+            if partner_ws:
+                try:
+                    await partner_ws.send_json({
+                        "type": "call-end",
+                        "reason": "disconnect",
+                        "fromUserId": user_id,
+                    })
+                    await partner_ws.send_json({
+                        "type": "system",
+                        "message": "Stranger disconnected",
+                    })
+                except Exception:
+                    pass

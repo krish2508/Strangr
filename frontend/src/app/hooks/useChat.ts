@@ -8,24 +8,76 @@ export interface Message {
   timestamp: Date;
 }
 
+export interface MediaState {
+  audioEnabled: boolean;
+  videoEnabled: boolean;
+}
+
+export type ChatMode = "text" | "video";
+
+export type CallStatus =
+  | "idle"
+  | "searching"
+  | "matched"
+  | "connecting"
+  | "connected"
+  | "ended"
+  | "error";
+
+export type OutgoingSignalMessage =
+  | { type: "webrtc-offer"; sdp: RTCSessionDescriptionInit }
+  | { type: "webrtc-answer"; sdp: RTCSessionDescriptionInit }
+  | { type: "webrtc-ice-candidate"; candidate: RTCIceCandidateInit }
+  | { type: "call-end"; reason: "next" | "disconnect" | "stop" };
+
+export type IncomingSignalMessage =
+  | { type: "webrtc-offer"; sdp: RTCSessionDescriptionInit; fromUserId: string }
+  | { type: "webrtc-answer"; sdp: RTCSessionDescriptionInit; fromUserId: string }
+  | { type: "webrtc-ice-candidate"; candidate: RTCIceCandidateInit; fromUserId: string }
+  | {
+      type: "call-end";
+      reason: "next" | "disconnect" | "stop";
+      fromUserId: string;
+    };
+
 interface UseChatReturn {
+  userId: string;
   messages: Message[];
   strangerTyping: boolean;
   strangerConnected: boolean;
   isSearching: boolean;
+  matchedPartnerId: string | null;
+  remoteMediaState: MediaState;
+  latestSignal: IncomingSignalMessage | null;
+  callStatus: CallStatus;
+  connectionError: string | null;
   sendMessage: (text: string) => void;
   sendTyping: () => void;
   sendNext: () => void;
+  sendSignalMessage: (message: OutgoingSignalMessage) => void;
+  sendMediaState: (state: MediaState) => void;
+  updateCallStatus: (status: CallStatus) => void;
 }
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:5050";
+const DEFAULT_REMOTE_MEDIA_STATE: MediaState = {
+  audioEnabled: true,
+  videoEnabled: true,
+};
+
+function createMessageId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /**
- * Shared WebSocket chat hook.
- * Manages the full WebSocket lifecycle and exposes a clean API
- * for Chat and VideoChat to consume.
+ * Shared WebSocket realtime hook.
+ * Handles text chat, matchmaking, and WebRTC signaling on the same socket.
  */
-export function useChat(): UseChatReturn {
+export function useChat(mode: ChatMode = "text"): UseChatReturn {
   const userId = useUserId();
   const wsRef = useRef<WebSocket | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -34,40 +86,58 @@ export function useChat(): UseChatReturn {
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [strangerConnected, setStrangerConnected] = useState(false);
   const [isSearching, setIsSearching] = useState(true);
+  const [matchedPartnerId, setMatchedPartnerId] = useState<string | null>(null);
+  const [remoteMediaState, setRemoteMediaState] = useState<MediaState>(DEFAULT_REMOTE_MEDIA_STATE);
+  const [latestSignal, setLatestSignal] = useState<IncomingSignalMessage | null>(null);
+  const [callStatus, setCallStatus] = useState<CallStatus>("searching");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
-  const addMessage = useCallback(
-    (text: string, sender: Message["sender"]) => {
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), text, sender, timestamp: new Date() },
-      ]);
-    },
-    []
-  );
+  const addMessage = useCallback((text: string, sender: Message["sender"]) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: createMessageId(), text, sender, timestamp: new Date() },
+    ]);
+  }, []);
+
+  const resetPeerState = useCallback((nextStatus: CallStatus) => {
+    setMatchedPartnerId(null);
+    setRemoteMediaState(DEFAULT_REMOTE_MEDIA_STATE);
+    setLatestSignal(null);
+    setCallStatus(nextStatus);
+  }, []);
 
   useEffect(() => {
-    const ws = new WebSocket(`${WS_URL}/ws/${userId}`);
+    const params = new URLSearchParams({ mode });
+    const ws = new WebSocket(`${WS_URL}/ws/${userId}?${params.toString()}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setStrangerConnected(false); // will become true on match
+      setConnectionError(null);
+      setStrangerConnected(false);
       setIsSearching(true);
+      resetPeerState("searching");
       addMessage("Looking for a stranger to chat with...", "system");
     };
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data) as
+          | {
+              type: "chat";
+              message: string;
+            }
+          | { type: "typing" }
+          | { type: "system"; message: string; partnerId?: string }
+          | { type: "media-state"; audioEnabled: boolean; videoEnabled: boolean }
+          | IncomingSignalMessage;
 
         if (data.type === "chat") {
           setStrangerTyping(false);
           addMessage(data.message, "stranger");
-          // Mark as connected when first real message arrives
           setStrangerConnected(true);
         } else if (data.type === "typing") {
           setStrangerConnected(true);
           setStrangerTyping(true);
-          // Auto-clear the typing indicator after 3s of silence
           if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
           typingTimeoutRef.current = setTimeout(() => {
             setStrangerTyping(false);
@@ -75,9 +145,6 @@ export function useChat(): UseChatReturn {
         } else if (data.type === "system") {
           const systemText =
             typeof data.message === "string" ? data.message : String(data.message ?? "");
-
-
-
           const lower = systemText.toLowerCase();
           const isDisconnect = lower.includes("disconnected");
           const isMatched = lower.includes("matched");
@@ -86,46 +153,70 @@ export function useChat(): UseChatReturn {
             setStrangerConnected(true);
             setIsSearching(false);
             setStrangerTyping(false);
-            // Start fresh for a new match (prevents old "disconnected" from showing after match).
+            setMatchedPartnerId(data.partnerId ?? null);
+            setRemoteMediaState(DEFAULT_REMOTE_MEDIA_STATE);
+            setLatestSignal(null);
+            setCallStatus("matched");
             setMessages([
-              { id: crypto.randomUUID(), text: systemText, sender: "system", timestamp: new Date() },
+              { id: createMessageId(), text: systemText, sender: "system", timestamp: new Date() },
             ]);
           } else if (isDisconnect) {
             setStrangerConnected(false);
             setIsSearching(false);
             setStrangerTyping(false);
+            resetPeerState("ended");
             addMessage(systemText, "system");
           } else {
-            // Other system messages (e.g. matched/unknown) mean the stranger is here.
             setStrangerConnected(true);
             setStrangerTyping(false);
             addMessage(systemText, "system");
           }
+        } else if (data.type === "media-state") {
+          setRemoteMediaState({
+            audioEnabled: Boolean(data.audioEnabled),
+            videoEnabled: Boolean(data.videoEnabled),
+          });
+        } else {
+          setLatestSignal({
+            ...data,
+            fromUserId: data.fromUserId,
+          });
+
+          if (data.type === "call-end") {
+            setStrangerConnected(false);
+            setStrangerTyping(false);
+            setCallStatus("ended");
+          } else {
+            setCallStatus("connecting");
+          }
         }
       } catch {
-        // ignore malformed messages
+        // Ignore malformed realtime payloads.
       }
     };
 
     ws.onclose = () => {
       setStrangerConnected(false);
+      setConnectionError("Connection closed. Please refresh the page.");
+      resetPeerState("ended");
     };
 
     ws.onerror = () => {
       addMessage("Connection error. Please refresh the page.", "system");
       setStrangerConnected(false);
+      setConnectionError("Connection error. Please refresh the page.");
+      resetPeerState("error");
     };
 
     return () => {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       ws.close();
     };
-  }, [userId, addMessage]);
+  }, [userId, mode, addMessage, resetPeerState]);
 
   const sendMessage = useCallback((text: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "chat", message: text }));
-      // Add own message to local state immediately (backend only forwards to partner)
       addMessage(text, "you");
     }
   }, [addMessage]);
@@ -138,16 +229,53 @@ export function useChat(): UseChatReturn {
 
   const sendNext = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-
-
       wsRef.current.send(JSON.stringify({ type: "next" }));
     }
+
     setStrangerConnected(false);
     setIsSearching(true);
     setStrangerTyping(false);
+    resetPeerState("searching");
     setMessages([]);
     addMessage("Searching for a new stranger...", "system");
-  }, [addMessage]);
+  }, [addMessage, resetPeerState]);
 
-  return { messages, strangerTyping, strangerConnected, isSearching, sendMessage, sendTyping, sendNext };
+  const sendSignalMessage = useCallback((message: OutgoingSignalMessage) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    }
+  }, []);
+
+  const sendMediaState = useCallback((state: MediaState) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "media-state",
+        audioEnabled: state.audioEnabled,
+        videoEnabled: state.videoEnabled,
+      }));
+    }
+  }, []);
+
+  const updateCallStatus = useCallback((status: CallStatus) => {
+    setCallStatus(status);
+  }, []);
+
+  return {
+    userId,
+    messages,
+    strangerTyping,
+    strangerConnected,
+    isSearching,
+    matchedPartnerId,
+    remoteMediaState,
+    latestSignal,
+    callStatus,
+    connectionError,
+    sendMessage,
+    sendTyping,
+    sendNext,
+    sendSignalMessage,
+    sendMediaState,
+    updateCallStatus,
+  };
 }

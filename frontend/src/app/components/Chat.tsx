@@ -13,7 +13,7 @@ export function Chat() {
   const chatMode = location.state?.mode || "text";
 
   const { messages, strangerTyping, strangerConnected, isSearching, sendMessage, sendTyping, sendNext } =
-    useChat();
+    useChat("text");
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = useCallback(() => {
