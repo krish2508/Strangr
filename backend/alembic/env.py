@@ -1,25 +1,40 @@
-import sys
 import os
-
-sys.path.append(os.getcwd())
+import sys
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
 from alembic import context
+from dotenv import load_dotenv
+from sqlalchemy import engine_from_config, pool
+from sqlalchemy.exc import OperationalError
+
+sys.path.append(os.getcwd())
+load_dotenv(override=True)
+
 from database import Base
 from models import *
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-DATABASE_URL = os.getenv("SYNC_DATABASE_URL")
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+
+def get_sync_database_url() -> str:
+    """Return a sync SQLAlchemy URL for Alembic."""
+    sync_url = os.getenv("SYNC_DATABASE_URL")
+    if sync_url:
+        return sync_url
+
+    async_url = os.getenv("DATABASE_URL")
+    if async_url:
+        return async_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+
+    raise RuntimeError(
+        "No database URL configured for Alembic. Set SYNC_DATABASE_URL or DATABASE_URL."
+    )
+
+
+config.set_main_option("sqlalchemy.url", get_sync_database_url())
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
@@ -74,13 +89,20 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+    try:
+        with connectable.connect() as connection:
+            context.configure(
+                connection=connection, target_metadata=target_metadata
+            )
 
-        with context.begin_transaction():
-            context.run_migrations()
+            with context.begin_transaction():
+                context.run_migrations()
+    except OperationalError as exc:
+        raise RuntimeError(
+            "Alembic could not connect to the configured database. "
+            "If you are using Supabase, verify the hostname resolves on this machine "
+            "or point DATABASE_URL/SYNC_DATABASE_URL to a reachable local Postgres instance."
+        ) from exc
 
 
 if context.is_offline_mode():
