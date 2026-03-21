@@ -3,3 +3,5 @@ __pycache__
 venv
 .env
 node_modules/
+deploy/env/production.env
+deploy/env/frontend.production.env

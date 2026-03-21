@@ -10,7 +10,46 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_TOKENINFO_URL = "https://www.googleapis.com/oauth2/v1/tokeninfo"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+def _get_google_client_id() -> str:
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        logger.error("GOOGLE_CLIENT_ID is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google authentication is not configured",
+        )
+    return client_id
+
+
+def _validate_google_access_token(token: str) -> None:
+    client_id = _get_google_client_id()
+
+    try:
+        resp = http_requests.get(
+            GOOGLE_TOKENINFO_URL,
+            params={"access_token": token},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        token_info = resp.json()
+    except Exception as e:
+        logger.error(f"Failed to validate Google access token: {e}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google token")
+
+    valid_audiences = {
+        token_info.get("issued_to"),
+        token_info.get("audience"),
+        token_info.get("aud"),
+        token_info.get("azp"),
+    }
+
+    if client_id not in valid_audiences:
+        logger.warning("Rejected Google token because audience/client id did not match")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google token audience")
 
 
 async def _get_user_by_email(db: AsyncSession, email: str) -> models.User | None:
@@ -90,11 +129,12 @@ class AuthController:
     async def google_login(token: str, db: AsyncSession) -> dict:
         """Authenticate or create a user via Google OAuth access token."""
         logger.info("Google login attempt received")
+        _validate_google_access_token(token)
 
         # Step 1: Fetch user info from Google
         try:
             resp = http_requests.get(
-                "https://www.googleapis.com/oauth2/v3/userinfo",
+                GOOGLE_USERINFO_URL,
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=10,
             )
@@ -102,7 +142,15 @@ class AuthController:
             user_info = resp.json()
             email: str = user_info["email"]
             name: str = user_info.get("name", "")
+            email_verified = user_info.get("email_verified", True)
+            if not email or not email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Google account email is not verified",
+                )
         except Exception as e:
+            if isinstance(e, HTTPException):
+                raise
             logger.error(f"Failed to fetch Google user info: {e}")
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google token")
 

@@ -1,0 +1,15 @@
+.git
+.gitignore
+.cursor
+node_modules
+frontend/node_modules
+backend/venv
+backend/.venv
+backend/__pycache__
+frontend/dist
+backend/.pytest_cache
+backend/alembic/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env

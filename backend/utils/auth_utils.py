@@ -9,11 +9,17 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import User
+from settings import IS_PRODUCTION
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "changeme-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if IS_PRODUCTION:
+        raise RuntimeError("SECRET_KEY environment variable must be set in production")
+    SECRET_KEY = "changeme-in-development"
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7

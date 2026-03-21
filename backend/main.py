@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from connection_manager import manager
 from matchmaking import matchmaker
@@ -12,6 +13,7 @@ from redis_pubsub import start_listener
 
 from database import engine, Base
 from routes import auth_routes
+from settings import get_csv_env
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -32,6 +34,8 @@ WEBRTC_SIGNAL_TYPES = {
     "call-end",
 }
 VALID_CHAT_MODES = {"text", "video"}
+DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+CORS_ALLOWED_ORIGINS = get_csv_env("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ORIGINS)
 
 
 async def notify_matched_users(user1: str, user2: str) -> None:
@@ -89,13 +93,21 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict to your frontend URL in production
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(auth_routes.router)
+
+
+@app.get("/api/health")
+async def healthcheck() -> JSONResponse:
+    return JSONResponse({
+        "status": "ok",
+        "service": "strangr-backend",
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -100,6 +100,7 @@ export function Login() {
   };
 
   const googleLogin = useGoogleLogin({
+    scope: "openid email profile",
     onSuccess: async (tokenResponse) => {
       setServerError("");
       setIsLoading(true);
