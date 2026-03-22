@@ -20,6 +20,6 @@ jobs:
           script: |
             cd ~/Strangr
             git pull origin prod
-            docker-compose --env-file deploy/env/production.env -f docker-compose.prod.yml build --no-cache
-            docker-compose --env-file deploy/env/production.env -f docker-compose.prod.yml up -d
-            docker-compose --env-file deploy/env/production.env -f docker-compose.prod.yml exec -T backend alembic upgrade head
+            docker compose --env-file deploy/env/production.env -f docker-compose.prod.yml build --no-cache
+            docker compose --env-file deploy/env/production.env -f docker-compose.prod.yml up -d
+            docker compose --env-file deploy/env/production.env -f docker-compose.prod.yml exec -T backend alembic upgrade head
