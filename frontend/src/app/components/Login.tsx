@@ -194,7 +194,7 @@ export function Login() {
                     setFormData({ ...formData, email: e.target.value })
                   }
                   className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-600"
-                  placeholder="your@email.com"
+                  placeholder="youremail@email.com"
                   disabled={isLoading}
                 />
               </div>
