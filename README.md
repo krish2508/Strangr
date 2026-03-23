@@ -1,1 +1,1 @@
-# Strangr
+# Strangr app
