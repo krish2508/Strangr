@@ -64,6 +64,9 @@ export function VideoChat() {
   const audioSenderRef = useRef<RTCRtpSender | null>(null);
   const videoSenderRef = useRef<RTCRtpSender | null>(null);
   const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const makingOfferRef = useRef(false);
+  const ignoreOfferRef = useRef(false);
+  const isSettingRemoteAnswerPendingRef = useRef(false);
 
   const iceServers = useMemo(getIceServers, []);
 
@@ -91,6 +94,13 @@ export function VideoChat() {
       .getVideoTracks()
       .some((track) => track.readyState === "live");
     setHasLocalVideoTrack(hasActiveVideoTrack);
+  }, []);
+
+  const syncRemoteVideoState = useCallback(() => {
+    const hasActiveRemoteVideoTrack = remoteStreamRef.current
+      .getVideoTracks()
+      .some((track) => track.readyState === "live");
+    setHasRemoteTracks(hasActiveRemoteVideoTrack);
   }, []);
 
   const attachStreamToVideo = useCallback(async (videoEl: HTMLVideoElement | null, stream: MediaStream) => {
@@ -134,11 +144,15 @@ export function VideoChat() {
 
   const cleanupPeerConnection = useCallback(() => {
     pendingIceCandidatesRef.current = [];
+    makingOfferRef.current = false;
+    ignoreOfferRef.current = false;
+    isSettingRemoteAnswerPendingRef.current = false;
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
       peerConnectionRef.current.onconnectionstatechange = null;
+      peerConnectionRef.current.onnegotiationneeded = null;
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
@@ -204,20 +218,32 @@ export function VideoChat() {
     }
   }, []);
 
-  const createOfferForPeer = useCallback(async (pc: RTCPeerConnection) => {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    if (pc.localDescription) {
-      sendSignalMessage({
-        type: "webrtc-offer",
-        sdp: {
-          type: pc.localDescription.type,
-          sdp: pc.localDescription.sdp ?? "",
-        },
-      });
-    }
+  const sendSessionDescription = useCallback((description: RTCSessionDescriptionInit) => {
+    sendSignalMessage({
+      type: description.type === "answer" ? "webrtc-answer" : "webrtc-offer",
+      sdp: {
+        type: description.type,
+        sdp: description.sdp ?? "",
+      },
+    });
   }, [sendSignalMessage]);
+
+  const negotiatePeerConnection = useCallback(async (pc: RTCPeerConnection) => {
+    if (peerConnectionRef.current !== pc || !activePartnerRef.current || pc.signalingState !== "stable") {
+      return;
+    }
+
+    try {
+      makingOfferRef.current = true;
+      await pc.setLocalDescription();
+
+      if (pc.localDescription) {
+        sendSessionDescription(pc.localDescription);
+      }
+    } finally {
+      makingOfferRef.current = false;
+    }
+  }, [sendSessionDescription]);
 
   const createPeerConnection = useCallback((partnerId: string) => {
     const pc = new RTCPeerConnection({ iceServers });
@@ -225,7 +251,6 @@ export function VideoChat() {
     activePartnerRef.current = partnerId;
     pendingIceCandidatesRef.current = [];
     resetRemoteStream();
-    syncLocalTracksToPeer(pc);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -239,6 +264,10 @@ export function VideoChat() {
           },
         });
       }
+    };
+
+    pc.onnegotiationneeded = () => {
+      void negotiatePeerConnection(pc);
     };
 
     pc.ontrack = (event) => {
@@ -258,7 +287,7 @@ export function VideoChat() {
         }
       }
 
-      setHasRemoteTracks(remoteStreamRef.current.getTracks().length > 0);
+      syncRemoteVideoState();
       attachRemoteStream();
     };
 
@@ -275,8 +304,19 @@ export function VideoChat() {
       }
     };
 
+    syncLocalTracksToPeer(pc);
+
     return pc;
-  }, [attachRemoteStream, iceServers, resetRemoteStream, sendSignalMessage, syncLocalTracksToPeer, updateCallStatus]);
+  }, [
+    attachRemoteStream,
+    iceServers,
+    negotiatePeerConnection,
+    resetRemoteStream,
+    sendSignalMessage,
+    syncLocalTracksToPeer,
+    syncRemoteVideoState,
+    updateCallStatus,
+  ]);
 
   const ensurePeerConnection = useCallback((partnerId: string) => {
     if (peerConnectionRef.current && activePartnerRef.current === partnerId) {
@@ -295,16 +335,12 @@ export function VideoChat() {
       return;
     }
 
-    const pc = ensurePeerConnection(matchedPartnerId);
+    ensurePeerConnection(matchedPartnerId);
     updateCallStatus("connecting");
     sendMediaState({
       audioEnabled: micEnabled,
       videoEnabled,
     });
-
-    if (userId.localeCompare(matchedPartnerId) < 0 && !pc.localDescription) {
-      await createOfferForPeer(pc);
-    }
   }, [
     matchedPartnerId,
     isSearching,
@@ -316,8 +352,6 @@ export function VideoChat() {
     sendMediaState,
     micEnabled,
     videoEnabled,
-    userId,
-    createOfferForPeer,
   ]);
 
   useEffect(() => {
@@ -372,29 +406,43 @@ export function VideoChat() {
       const pc = ensurePeerConnection(matchedPartnerId);
 
       if (latestSignal.type === "webrtc-offer") {
+        const readyForOffer =
+          !makingOfferRef.current &&
+          (pc.signalingState === "stable" || isSettingRemoteAnswerPendingRef.current);
+        const offerCollision = !readyForOffer;
+        const polite = userId.localeCompare(matchedPartnerId) > 0;
+
+        ignoreOfferRef.current = !polite && offerCollision;
+        if (ignoreOfferRef.current) {
+          return;
+        }
+
         await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
         await flushPendingIceCandidates();
-
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        await pc.setLocalDescription();
 
         if (pc.localDescription) {
-          sendSignalMessage({
-            type: "webrtc-answer",
-            sdp: {
-              type: pc.localDescription.type,
-              sdp: pc.localDescription.sdp ?? "",
-            },
-          });
+          sendSessionDescription(pc.localDescription);
         }
       } else if (latestSignal.type === "webrtc-answer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
-        await flushPendingIceCandidates();
+        try {
+          isSettingRemoteAnswerPendingRef.current = true;
+          await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
+          await flushPendingIceCandidates();
+        } finally {
+          isSettingRemoteAnswerPendingRef.current = false;
+        }
       } else if (latestSignal.type === "webrtc-ice-candidate") {
-        if (pc.remoteDescription) {
-          await pc.addIceCandidate(new RTCIceCandidate(latestSignal.candidate));
-        } else {
-          pendingIceCandidatesRef.current.push(latestSignal.candidate);
+        try {
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(new RTCIceCandidate(latestSignal.candidate));
+          } else {
+            pendingIceCandidatesRef.current.push(latestSignal.candidate);
+          }
+        } catch {
+          if (!ignoreOfferRef.current) {
+            console.warn("Failed to apply ICE candidate.");
+          }
         }
       }
     };
@@ -406,8 +454,9 @@ export function VideoChat() {
     flushPendingIceCandidates,
     latestSignal,
     matchedPartnerId,
-    sendSignalMessage,
+    sendSessionDescription,
     updateCallStatus,
+    userId,
   ]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
