@@ -435,6 +435,13 @@ export function VideoChat() {
   }, [attachLocalStream, attachRemoteStream]);
 
   useEffect(() => {
+    if (!isSearching) {
+      attachLocalStream();
+      attachRemoteStream();
+    }
+  }, [attachLocalStream, attachRemoteStream, isSearching]);
+
+  useEffect(() => {
     void initializeLocalMedia();
 
     return () => {
