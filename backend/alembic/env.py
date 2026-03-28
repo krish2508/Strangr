@@ -8,7 +8,6 @@ from sqlalchemy import engine_from_config, pool
 from sqlalchemy.exc import OperationalError
 
 sys.path.append(os.getcwd())
-load_dotenv(override=True)
 
 from database import Base
 from models import *

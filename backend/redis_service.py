@@ -3,11 +3,10 @@ import logging
 import redis
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 try:
