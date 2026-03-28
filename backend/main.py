@@ -119,11 +119,13 @@ async def healthcheck() -> JSONResponse:
 async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(default="text")):
     chat_mode = mode if mode in VALID_CHAT_MODES else "text"
     await manager.connect(user_id, ws)
+    logger.info("WebSocket accepted for user=%s mode=%s", user_id, chat_mode)
     matchmaker.add_user(user_id, chat_mode)
 
     user1, user2 = matchmaker.match_users(chat_mode)
     if user1 and user2:
         create_session(user1, user2)
+        logger.info("Initial match created mode=%s user1=%s user2=%s", chat_mode, user1, user2)
         await notify_matched_users(user1, user2)
 
 
@@ -137,6 +139,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(defa
             if msg_type == "next":
                 partner_id = get_partner(user_id)
                 partner_ws = manager.get(partner_id) if partner_id else None
+                logger.info("Received next from user=%s partner=%s mode=%s", user_id, partner_id, chat_mode)
 
                 # If we still have a partner connection, tell them we disconnected
                 # before removing our session mapping.
@@ -161,6 +164,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(defa
                 user1, user2 = matchmaker.match_users(chat_mode)
                 if user1 and user2:
                     create_session(user1, user2)
+                    logger.info("Rematch created mode=%s user1=%s user2=%s", chat_mode, user1, user2)
                     await notify_matched_users(user1, user2)
 
 
@@ -168,10 +172,23 @@ async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(defa
                 # For chat/typing we need a partner mapping.
                 partner_id = get_partner(user_id)
                 if not partner_id:
+                    logger.warning(
+                        "Dropping message without active partner user=%s mode=%s type=%s",
+                        user_id,
+                        chat_mode,
+                        msg_type,
+                    )
                     continue
 
                 partner_ws = manager.get(partner_id)
                 if not partner_ws:
+                    logger.warning(
+                        "Dropping message because partner socket missing user=%s partner=%s mode=%s type=%s",
+                        user_id,
+                        partner_id,
+                        chat_mode,
+                        msg_type,
+                    )
                     continue
 
                 if msg_type == "chat":
@@ -182,6 +199,13 @@ async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(defa
                 elif msg_type == "typing":
                     await partner_ws.send_json({"type": "typing"})
                 elif msg_type in WEBRTC_SIGNAL_TYPES:
+                    logger.info(
+                        "Forwarding signaling type=%s from=%s to=%s mode=%s",
+                        msg_type,
+                        user_id,
+                        partner_id,
+                        chat_mode,
+                    )
                     await partner_ws.send_json({
                         **data,
                         "fromUserId": user_id,
@@ -190,6 +214,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(defa
                     logger.warning(f"Unknown message type '{msg_type}' from user {user_id}")
 
     except WebSocketDisconnect:
+        logger.info("WebSocket disconnected user=%s mode=%s", user_id, chat_mode)
         manager.disconnect(user_id)
         matchmaker.remove_user(user_id, chat_mode)
         partner_id = remove_session(user_id)

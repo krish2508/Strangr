@@ -19,6 +19,16 @@ import { MediaState, useChat } from "../hooks/useChat";
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
+function debugVideoChat(event: string, payload?: Record<string, unknown>) {
+  const timestamp = new Date().toISOString();
+  if (payload) {
+    console.info(`[video-chat] ${timestamp} ${event}`, payload);
+    return;
+  }
+
+  console.info(`[video-chat] ${timestamp} ${event}`);
+}
+
 function getIceServers(): RTCIceServer[] {
   const raw = import.meta.env.VITE_WEBRTC_ICE_SERVERS;
   if (!raw) return DEFAULT_ICE_SERVERS;
@@ -167,6 +177,7 @@ export function VideoChat() {
     try {
       stopLocalMedia();
       setDeviceError(null);
+      debugVideoChat("local-media:init:start");
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -179,7 +190,12 @@ export function VideoChat() {
       setIsMediaReady(true);
       syncLocalVideoState();
       attachLocalStream();
+      debugVideoChat("local-media:init:success", {
+        audioTracks: stream.getAudioTracks().length,
+        videoTracks: stream.getVideoTracks().length,
+      });
     } catch {
+      debugVideoChat("local-media:init:error");
       setDeviceError("Camera and microphone access is required to start video chat.");
       setMicEnabled(false);
       setVideoEnabled(false);
@@ -235,9 +251,17 @@ export function VideoChat() {
 
     try {
       makingOfferRef.current = true;
+      debugVideoChat("peer:negotiationneeded", {
+        partnerId: activePartnerRef.current,
+        signalingState: pc.signalingState,
+      });
       await pc.setLocalDescription();
 
       if (pc.localDescription) {
+        debugVideoChat("signal:send", {
+          type: pc.localDescription.type,
+          partnerId: activePartnerRef.current,
+        });
         sendSessionDescription(pc.localDescription);
       }
     } finally {
@@ -251,9 +275,18 @@ export function VideoChat() {
     activePartnerRef.current = partnerId;
     pendingIceCandidatesRef.current = [];
     resetRemoteStream();
+    debugVideoChat("peer:create", {
+      partnerId,
+      iceServers: iceServers.map((server) => server.urls),
+    });
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        debugVideoChat("ice-candidate:send", {
+          partnerId,
+          protocol: event.candidate.protocol,
+          type: event.candidate.type,
+        });
         sendSignalMessage({
           type: "webrtc-ice-candidate",
           candidate: {
@@ -268,6 +301,27 @@ export function VideoChat() {
 
     pc.onnegotiationneeded = () => {
       void negotiatePeerConnection(pc);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      debugVideoChat("peer:ice-connection-state", {
+        partnerId,
+        state: pc.iceConnectionState,
+      });
+    };
+
+    pc.onicegatheringstatechange = () => {
+      debugVideoChat("peer:ice-gathering-state", {
+        partnerId,
+        state: pc.iceGatheringState,
+      });
+    };
+
+    pc.onsignalingstatechange = () => {
+      debugVideoChat("peer:signaling-state", {
+        partnerId,
+        state: pc.signalingState,
+      });
     };
 
     pc.ontrack = (event) => {
@@ -289,10 +343,20 @@ export function VideoChat() {
 
       syncRemoteVideoState();
       attachRemoteStream();
+      debugVideoChat("peer:remote-track", {
+        partnerId,
+        kind: event.track.kind,
+        streamCount: event.streams.length,
+        remoteTrackCount: remoteStreamRef.current.getTracks().length,
+      });
     };
 
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
+      debugVideoChat("peer:connection-state", {
+        partnerId,
+        state,
+      });
 
       if (state === "connected") {
         updateCallStatus("connected");
@@ -331,11 +395,21 @@ export function VideoChat() {
     if (!matchedPartnerId || isSearching || !strangerConnected) return;
 
     if (!isMediaReady || deviceError) {
+      debugVideoChat("peer:start-skipped", {
+        matchedPartnerId,
+        isMediaReady,
+        hasDeviceError: Boolean(deviceError),
+      });
       updateCallStatus("error");
       return;
     }
 
     ensurePeerConnection(matchedPartnerId);
+    debugVideoChat("peer:start", {
+      matchedPartnerId,
+      micEnabled,
+      videoEnabled,
+    });
     updateCallStatus("connecting");
     sendMediaState({
       audioEnabled: micEnabled,
@@ -397,6 +471,10 @@ export function VideoChat() {
 
     const handleSignal = async () => {
       if (latestSignal.type === "call-end") {
+        debugVideoChat("signal:received", {
+          type: latestSignal.type,
+          fromUserId: latestSignal.fromUserId,
+        });
         cleanupPeerConnection();
         setHasRemoteTracks(false);
         updateCallStatus("ended");
@@ -404,6 +482,10 @@ export function VideoChat() {
       }
 
       const pc = ensurePeerConnection(matchedPartnerId);
+      debugVideoChat("signal:received", {
+        type: latestSignal.type,
+        fromUserId: latestSignal.fromUserId,
+      });
 
       if (latestSignal.type === "webrtc-offer") {
         const readyForOffer =
@@ -414,6 +496,10 @@ export function VideoChat() {
 
         ignoreOfferRef.current = !polite && offerCollision;
         if (ignoreOfferRef.current) {
+          debugVideoChat("signal:offer-ignored", {
+            fromUserId: latestSignal.fromUserId,
+            polite,
+          });
           return;
         }
 
@@ -422,6 +508,10 @@ export function VideoChat() {
         await pc.setLocalDescription();
 
         if (pc.localDescription) {
+          debugVideoChat("signal:send", {
+            type: pc.localDescription.type,
+            partnerId: matchedPartnerId,
+          });
           sendSessionDescription(pc.localDescription);
         }
       } else if (latestSignal.type === "webrtc-answer") {
@@ -435,8 +525,14 @@ export function VideoChat() {
       } else if (latestSignal.type === "webrtc-ice-candidate") {
         try {
           if (pc.remoteDescription) {
+            debugVideoChat("ice-candidate:apply", {
+              fromUserId: latestSignal.fromUserId,
+            });
             await pc.addIceCandidate(new RTCIceCandidate(latestSignal.candidate));
           } else {
+            debugVideoChat("ice-candidate:queue", {
+              fromUserId: latestSignal.fromUserId,
+            });
             pendingIceCandidatesRef.current.push(latestSignal.candidate);
           }
         } catch {
@@ -483,6 +579,9 @@ export function VideoChat() {
       track.enabled = nextEnabled;
     });
     setMicEnabled(nextEnabled);
+    debugVideoChat("local-media:toggle-mic", {
+      enabled: nextEnabled,
+    });
 
     if (matchedPartnerId) {
       sendMediaState({
@@ -510,6 +609,9 @@ export function VideoChat() {
 
       setVideoEnabled(false);
       setHasLocalVideoTrack(false);
+      debugVideoChat("local-media:toggle-video", {
+        enabled: false,
+      });
 
       sendMediaState({
         audioEnabled: micEnabled,
@@ -540,6 +642,9 @@ export function VideoChat() {
       attachLocalStream();
       setVideoEnabled(true);
       setDeviceError(null);
+      debugVideoChat("local-media:toggle-video", {
+        enabled: true,
+      });
 
       sendMediaState({
         audioEnabled: micEnabled,
