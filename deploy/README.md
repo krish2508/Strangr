@@ -34,11 +34,24 @@ This repository includes a single-EC2 production stack for AWS using Docker Comp
    - `GOOGLE_CLIENT_ID`
    - `DATABASE_URL`
    - `SYNC_DATABASE_URL`
+   - `AWS_REGION`
+   - optional: `CLOUDWATCH_LOG_GROUP_PREFIX` (defaults to `/strangr/prod`)
 4. Replace in `deploy/env/frontend.production.env`:
    - `VITE_API_BASE_URL`
    - `VITE_WS_URL`
    - `VITE_GOOGLE_CLIENT_ID`
    - `VITE_WEBRTC_ICE_SERVERS`
+
+## CloudWatch logs
+- Docker Compose is configured to ship container stdout/stderr to CloudWatch Logs using the `awslogs` driver.
+- Set `AWS_REGION` in `deploy/env/production.env` to the EC2 region, for example `ap-south-1`.
+- Optionally set `CLOUDWATCH_LOG_GROUP_PREFIX`, for example `/strangr/prod`.
+- Ensure the EC2 instance role can create log groups/streams and write log events.
+- Expected log groups:
+  - `${CLOUDWATCH_LOG_GROUP_PREFIX}/reverse-proxy`
+  - `${CLOUDWATCH_LOG_GROUP_PREFIX}/frontend`
+  - `${CLOUDWATCH_LOG_GROUP_PREFIX}/backend`
+  - `${CLOUDWATCH_LOG_GROUP_PREFIX}/redis`
 
 ## Deploy
 ```bash

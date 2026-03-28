@@ -1,3 +1,9 @@
+x-awslogs-defaults: &awslogs-defaults
+  driver: awslogs
+  options:
+    awslogs-region: ${AWS_REGION}
+    awslogs-create-group: "true"
+
 services:
   reverse-proxy:
     image: caddy:2.10-alpine
@@ -17,6 +23,13 @@ services:
         condition: service_healthy
       backend:
         condition: service_healthy
+    logging:
+      <<: *awslogs-defaults
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-create-group: "true"
+        awslogs-group: ${CLOUDWATCH_LOG_GROUP_PREFIX:-/strangr/prod}/reverse-proxy
+        awslogs-stream: caddy
     networks:
       - strangr
 
@@ -34,6 +47,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      <<: *awslogs-defaults
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-create-group: "true"
+        awslogs-group: ${CLOUDWATCH_LOG_GROUP_PREFIX:-/strangr/prod}/frontend
+        awslogs-stream: frontend
     networks:
       - strangr
 
@@ -54,6 +74,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    logging:
+      <<: *awslogs-defaults
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-create-group: "true"
+        awslogs-group: ${CLOUDWATCH_LOG_GROUP_PREFIX:-/strangr/prod}/backend
+        awslogs-stream: backend
     networks:
       - strangr
 
@@ -70,6 +97,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      <<: *awslogs-defaults
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-create-group: "true"
+        awslogs-group: ${CLOUDWATCH_LOG_GROUP_PREFIX:-/strangr/prod}/redis
+        awslogs-stream: redis
     networks:
       - strangr
 
