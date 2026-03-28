@@ -48,7 +48,7 @@ interface UseChatReturn {
   isSearching: boolean;
   matchedPartnerId: string | null;
   remoteMediaState: MediaState;
-  latestSignal: IncomingSignalMessage | null;
+  pendingSignals: IncomingSignalMessage[];
   callStatus: CallStatus;
   connectionError: string | null;
   sendMessage: (text: string) => void;
@@ -57,6 +57,7 @@ interface UseChatReturn {
   sendSignalMessage: (message: OutgoingSignalMessage) => void;
   sendMediaState: (state: MediaState) => void;
   updateCallStatus: (status: CallStatus) => void;
+  consumePendingSignal: () => void;
 }
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:5050";
@@ -88,7 +89,7 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
   const [isSearching, setIsSearching] = useState(true);
   const [matchedPartnerId, setMatchedPartnerId] = useState<string | null>(null);
   const [remoteMediaState, setRemoteMediaState] = useState<MediaState>(DEFAULT_REMOTE_MEDIA_STATE);
-  const [latestSignal, setLatestSignal] = useState<IncomingSignalMessage | null>(null);
+  const [pendingSignals, setPendingSignals] = useState<IncomingSignalMessage[]>([]);
   const [callStatus, setCallStatus] = useState<CallStatus>("searching");
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
@@ -102,7 +103,7 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
   const resetPeerState = useCallback((nextStatus: CallStatus) => {
     setMatchedPartnerId(null);
     setRemoteMediaState(DEFAULT_REMOTE_MEDIA_STATE);
-    setLatestSignal(null);
+    setPendingSignals([]);
     setCallStatus(nextStatus);
   }, []);
 
@@ -155,7 +156,7 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
             setStrangerTyping(false);
             setMatchedPartnerId(data.partnerId ?? null);
             setRemoteMediaState(DEFAULT_REMOTE_MEDIA_STATE);
-            setLatestSignal(null);
+            setPendingSignals([]);
             setCallStatus("matched");
             setMessages([
               { id: createMessageId(), text: systemText, sender: "system", timestamp: new Date() },
@@ -177,10 +178,13 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
             videoEnabled: Boolean(data.videoEnabled),
           });
         } else {
-          setLatestSignal({
-            ...data,
-            fromUserId: data.fromUserId,
-          });
+          setPendingSignals((prev) => [
+            ...prev,
+            {
+              ...data,
+              fromUserId: data.fromUserId,
+            },
+          ]);
 
           if (data.type === "call-end") {
             setStrangerConnected(false);
@@ -260,6 +264,10 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
     setCallStatus(status);
   }, []);
 
+  const consumePendingSignal = useCallback(() => {
+    setPendingSignals((prev) => prev.slice(1));
+  }, []);
+
   return {
     userId,
     messages,
@@ -268,7 +276,7 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
     isSearching,
     matchedPartnerId,
     remoteMediaState,
-    latestSignal,
+    pendingSignals,
     callStatus,
     connectionError,
     sendMessage,
@@ -277,5 +285,6 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
     sendSignalMessage,
     sendMediaState,
     updateCallStatus,
+    consumePendingSignal,
   };
 }

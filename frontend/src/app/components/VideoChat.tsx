@@ -88,7 +88,7 @@ export function VideoChat() {
     isSearching,
     matchedPartnerId,
     remoteMediaState,
-    latestSignal,
+    pendingSignals,
     callStatus,
     connectionError,
     sendMessage,
@@ -97,6 +97,7 @@ export function VideoChat() {
     sendSignalMessage,
     sendMediaState,
     updateCallStatus,
+    consumePendingSignal,
   } = useChat("video");
 
   const syncLocalVideoState = useCallback(() => {
@@ -465,6 +466,8 @@ export function VideoChat() {
   }, [matchedPartnerId, strangerConnected, isMediaReady, micEnabled, videoEnabled, sendMediaState]);
 
   useEffect(() => {
+    const latestSignal = pendingSignals[0];
+
     if (!latestSignal || !matchedPartnerId || latestSignal.fromUserId !== matchedPartnerId) {
       return;
     }
@@ -478,6 +481,7 @@ export function VideoChat() {
         cleanupPeerConnection();
         setHasRemoteTracks(false);
         updateCallStatus("ended");
+        consumePendingSignal();
         return;
       }
 
@@ -500,6 +504,7 @@ export function VideoChat() {
             fromUserId: latestSignal.fromUserId,
             polite,
           });
+          consumePendingSignal();
           return;
         }
 
@@ -541,15 +546,18 @@ export function VideoChat() {
           }
         }
       }
+
+      consumePendingSignal();
     };
 
     void handleSignal();
   }, [
+    consumePendingSignal,
     cleanupPeerConnection,
     ensurePeerConnection,
     flushPendingIceCandidates,
-    latestSignal,
     matchedPartnerId,
+    pendingSignals,
     sendSessionDescription,
     updateCallStatus,
     userId,
