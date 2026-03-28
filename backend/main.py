@@ -104,6 +104,7 @@ app.include_router(auth_routes.router)
 
 @app.get("/api/health")
 async def healthcheck() -> JSONResponse:
+    logger.info("Health check requested")
     return JSONResponse({
         "status": "ok",
         "service": "strangr-backend",
