@@ -285,7 +285,12 @@ export function VideoChat() {
       if (event.candidate) {
         debugVideoChat("ice-candidate:send", {
           partnerId,
+          candidate: event.candidate.candidate,
+          address: event.candidate.address,
+          port: event.candidate.port,
           protocol: event.candidate.protocol,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
           type: event.candidate.type,
         });
         sendSignalMessage({
@@ -527,6 +532,15 @@ export function VideoChat() {
           sendSessionDescription(pc.localDescription);
         }
       } else if (latestSignal.type === "webrtc-answer") {
+        if (pc.signalingState === "stable") {
+          debugVideoChat("signal:answer-ignored", {
+            fromUserId: latestSignal.fromUserId,
+            signalingState: pc.signalingState,
+          });
+          consumePendingSignal();
+          return;
+        }
+
         try {
           isSettingRemoteAnswerPendingRef.current = true;
           await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
@@ -538,11 +552,13 @@ export function VideoChat() {
         try {
           if (pc.remoteDescription) {
             debugVideoChat("ice-candidate:apply", {
+              candidate: latestSignal.candidate.candidate,
               fromUserId: latestSignal.fromUserId,
             });
             await pc.addIceCandidate(new RTCIceCandidate(latestSignal.candidate));
           } else {
             debugVideoChat("ice-candidate:queue", {
+              candidate: latestSignal.candidate.candidate,
               fromUserId: latestSignal.fromUserId,
             });
             pendingIceCandidatesRef.current.push(latestSignal.candidate);
