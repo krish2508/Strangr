@@ -714,23 +714,23 @@ export function VideoChat() {
   const localVideoVisible = videoEnabled && hasLocalVideoTrack;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900">
-      <header className="bg-gradient-to-r from-purple-600 to-pink-500 text-white p-4 shadow-lg z-10">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+    <div className="h-[100dvh] flex flex-col bg-gray-900">
+      <header className="bg-gradient-to-r from-purple-600 to-pink-500 text-white p-3 sm:p-4 shadow-lg z-10">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Zap className="w-6 h-6 text-yellow-300" fill="currentColor" />
             <h1 className="text-xl font-bold">Strangr</h1>
-            <div className="flex items-center gap-2 ml-4">
+            <div className="hidden sm:flex items-center gap-2 ml-4">
               <Video className="w-4 h-4" />
               <span className="text-sm">Video Chat</span>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
             <div className="text-right">
               <p className="text-sm font-medium">{headerStatus}</p>
               <p className="text-xs text-white/80 capitalize">{callStatus}</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               <Circle
                 className={`w-3 h-3 ${strangerConnected ? "text-green-400" : "text-yellow-300"}`}
                 fill="currentColor"
@@ -741,7 +741,7 @@ export function VideoChat() {
         </div>
       </header>
 
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 min-h-0 relative overflow-hidden">
         <div className="absolute inset-0 bg-gray-800">
           <video
             ref={remoteVideoRef}
@@ -781,7 +781,7 @@ export function VideoChat() {
           <motion.div
             drag
             dragMomentum={false}
-            className="absolute bottom-6 right-6 w-64 h-48 bg-gray-700 rounded-2xl overflow-hidden shadow-2xl cursor-move"
+            className="absolute bottom-4 right-4 w-32 h-24 sm:bottom-6 sm:right-6 sm:w-64 sm:h-48 bg-gray-700 rounded-2xl overflow-hidden shadow-2xl cursor-move"
           >
             <video
               ref={localVideoRef}
@@ -794,8 +794,8 @@ export function VideoChat() {
             {!localVideoVisible && (
               <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-gray-800">
                 <div className="text-center">
-                  <VideoOff className="w-12 h-12 mx-auto mb-2 text-gray-400" />
-                  <p className="text-white text-sm">{videoEnabled ? "Starting camera..." : "Camera Off"}</p>
+                  <VideoOff className="w-8 h-8 sm:w-12 sm:h-12 mx-auto mb-2 text-gray-400" />
+                  <p className="text-white text-xs sm:text-sm">{videoEnabled ? "Starting camera..." : "Camera Off"}</p>
                 </div>
               </div>
             )}
@@ -813,7 +813,7 @@ export function VideoChat() {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 20 }}
-              className="absolute right-0 top-0 bottom-0 w-96 bg-white shadow-2xl flex flex-col z-20"
+              className="absolute inset-0 sm:left-auto sm:w-96 bg-white shadow-2xl flex flex-col z-20"
             >
               <div className="bg-gradient-to-r from-purple-600 to-pink-500 text-white p-4 flex items-center justify-between">
                 <h3 className="font-bold">Chat</h3>
@@ -896,21 +896,21 @@ export function VideoChat() {
         </AnimatePresence>
       </div>
 
-      <div className="bg-gray-800 p-6">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex gap-3">
+      <div className="bg-gray-800 p-3 sm:p-6">
+        <div className="max-w-4xl mx-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex justify-center gap-3">
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               onClick={toggleMic}
               disabled={!isMediaReady}
-              className={`p-4 rounded-full transition-colors ${
+              className={`p-3 sm:p-4 rounded-full transition-colors ${
                 micEnabled
                   ? "bg-gray-700 hover:bg-gray-600 text-white"
                   : "bg-red-500 hover:bg-red-600 text-white"
               } disabled:bg-gray-600 disabled:text-gray-300`}
             >
-              {micEnabled ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+              {micEnabled ? <Mic className="w-5 h-5 sm:w-6 sm:h-6" /> : <MicOff className="w-5 h-5 sm:w-6 sm:h-6" />}
             </motion.button>
 
             <motion.button
@@ -918,33 +918,33 @@ export function VideoChat() {
               whileTap={{ scale: 0.9 }}
               onClick={() => void toggleVideo()}
               disabled={!isMediaReady && videoEnabled}
-              className={`p-4 rounded-full transition-colors ${
+              className={`p-3 sm:p-4 rounded-full transition-colors ${
                 videoEnabled
                   ? "bg-gray-700 hover:bg-gray-600 text-white"
                   : "bg-red-500 hover:bg-red-600 text-white"
               } disabled:bg-gray-600 disabled:text-gray-300`}
             >
-              {videoEnabled ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
+              {videoEnabled ? <Video className="w-5 h-5 sm:w-6 sm:h-6" /> : <VideoOff className="w-5 h-5 sm:w-6 sm:h-6" />}
             </motion.button>
 
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
               onClick={() => setShowChat(!showChat)}
-              className={`p-4 rounded-full transition-colors ${
+              className={`p-3 sm:p-4 rounded-full transition-colors ${
                 showChat ? "bg-purple-600 text-white" : "bg-gray-700 hover:bg-gray-600 text-white"
               }`}
             >
-              <MessageSquare className="w-6 h-6" />
+              <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6" />
             </motion.button>
           </div>
 
-          <div className="flex gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => void handleSkip()}
-              className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-full font-medium flex items-center gap-2 transition-colors"
+              className="bg-orange-500 hover:bg-orange-600 text-white px-4 sm:px-6 py-3 rounded-full font-medium flex items-center justify-center gap-2 transition-colors"
             >
               <SkipForward className="w-5 h-5" />
               Next
@@ -954,14 +954,14 @@ export function VideoChat() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleStop}
-              className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-full font-medium flex items-center gap-2 transition-colors"
+              className="bg-red-500 hover:bg-red-600 text-white px-4 sm:px-6 py-3 rounded-full font-medium flex items-center justify-center gap-2 transition-colors"
             >
               <X className="w-5 h-5" />
               Stop
             </motion.button>
           </div>
 
-          <div className="w-40 text-right text-xs text-gray-300">
+          <div className="hidden sm:block w-40 text-right text-xs text-gray-300">
             <p>Remote mic: {remoteMediaState.audioEnabled ? "on" : "off"}</p>
             <p>Remote cam: {remoteMediaState.videoEnabled ? "on" : "off"}</p>
           </div>

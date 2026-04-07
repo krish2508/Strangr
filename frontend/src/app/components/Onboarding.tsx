@@ -36,7 +36,7 @@ export function Onboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-red-500 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 via-pink-500 to-red-500 flex flex-col overflow-y-auto">
       {/* Header */}
       <header className="p-6">
         <div className="flex items-center gap-2">
@@ -58,7 +58,7 @@ export function Onboarding() {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center px-6 pb-12">
+      <main className="flex-1 flex items-center justify-center px-4 pb-8 sm:px-6 sm:pb-12">
         <AnimatePresence mode="wait">
           {step === 1 && (
             <motion.div
@@ -211,15 +211,15 @@ export function Onboarding() {
               exit={{ opacity: 0, x: -20 }}
               className="w-full max-w-2xl"
             >
-              <h2 className="text-4xl font-bold text-white mb-4 text-center">
+              <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4 text-center">
                 Community Guidelines
               </h2>
-              <p className="text-white/90 text-center mb-8">
+              <p className="text-white/90 text-center mb-6 sm:mb-8">
                 Please read and agree to our guidelines
               </p>
 
-              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 mb-8">
-                <ul className="space-y-4 text-white">
+              <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 sm:p-8 mb-6 sm:mb-8">
+                <ul className="space-y-3 sm:space-y-4 text-white text-sm sm:text-base">
                   <li className="flex gap-3">
                     <span className="text-yellow-300 font-bold">1.</span>
                     <span>Be respectful and kind to all users</span>
@@ -243,12 +243,12 @@ export function Onboarding() {
                 </ul>
               </div>
 
-              <div className="flex gap-4">
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setStep(2)}
-                  className="flex-1 bg-white/20 text-white py-4 rounded-full font-bold hover:bg-white/30 transition-all flex items-center justify-center gap-2"
+                  className="w-full sm:flex-1 bg-white/20 text-white py-3 sm:py-4 px-4 rounded-full font-bold hover:bg-white/30 transition-all flex items-center justify-center gap-2"
                 >
                   <ArrowLeft className="w-5 h-5" />
                   Back
@@ -257,9 +257,9 @@ export function Onboarding() {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={handleStart}
-                  className="flex-1 bg-yellow-300 text-purple-700 py-4 rounded-full font-bold hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                  className="w-full sm:flex-1 bg-yellow-300 text-purple-700 py-3 sm:py-4 px-4 rounded-full font-bold hover:shadow-lg transition-all flex items-center justify-center gap-2 text-center"
                 >
-                  I Agree - Start Chatting
+                  <span>I Agree<span className="hidden sm:inline"> - Start Chatting</span></span>
                   <ArrowRight className="w-5 h-5" />
                 </motion.button>
               </div>
