@@ -61,6 +61,7 @@ interface UseChatReturn {
 }
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:5050";
+const MAX_INTERESTS = 3;
 const DEFAULT_REMOTE_MEDIA_STATE: MediaState = {
   audioEnabled: true,
   videoEnabled: true,
@@ -78,10 +79,15 @@ function createMessageId(): string {
  * Shared WebSocket realtime hook.
  * Handles text chat, matchmaking, and WebRTC signaling on the same socket.
  */
-export function useChat(mode: ChatMode = "text"): UseChatReturn {
+export function useChat(mode: ChatMode = "text", interests: string[] = []): UseChatReturn {
   const userId = useUserId();
   const wsRef = useRef<WebSocket | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const interestParam = interests
+    .map((interest) => interest.trim())
+    .filter(Boolean)
+    .slice(0, MAX_INTERESTS)
+    .join(",");
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [strangerTyping, setStrangerTyping] = useState(false);
@@ -109,6 +115,9 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
 
   useEffect(() => {
     const params = new URLSearchParams({ mode });
+    if (interestParam) {
+      params.set("interests", interestParam);
+    }
     const ws = new WebSocket(`${WS_URL}/ws/${userId}?${params.toString()}`);
     wsRef.current = ws;
 
@@ -216,7 +225,7 @@ export function useChat(mode: ChatMode = "text"): UseChatReturn {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       ws.close();
     };
-  }, [userId, mode, addMessage, resetPeerState]);
+  }, [userId, mode, interestParam, addMessage, resetPeerState]);
 
   const sendMessage = useCallback((text: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

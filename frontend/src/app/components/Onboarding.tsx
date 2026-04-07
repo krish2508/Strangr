@@ -8,6 +8,7 @@ const INTERESTS = [
   "Travel", "Food", "Fashion", "Photography", "Books", "Fitness",
   "Coding", "Anime", "Science", "Dancing", "Cooking", "Pets"
 ];
+const MAX_INTERESTS = 3;
 
 export function Onboarding() {
   const navigate = useNavigate();
@@ -16,11 +17,17 @@ export function Onboarding() {
   const [chatMode, setChatMode] = useState<"text" | "video" | null>(null);
 
   const toggleInterest = (interest: string) => {
-    setSelectedInterests(prev =>
-      prev.includes(interest)
-        ? prev.filter(i => i !== interest)
-        : [...prev, interest]
-    );
+    setSelectedInterests((prev) => {
+      if (prev.includes(interest)) {
+        return prev.filter((i) => i !== interest);
+      }
+
+      if (prev.length >= MAX_INTERESTS) {
+        return prev;
+      }
+
+      return [...prev, interest];
+    });
   };
 
   const handleStart = () => {
@@ -65,25 +72,33 @@ export function Onboarding() {
                 Select Your Interests
               </h2>
               <p className="text-white/90 text-center mb-8">
-                Choose topics you'd like to talk about (optional)
+                Choose up to {MAX_INTERESTS} topics you'd like to talk about
               </p>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
-                {INTERESTS.map((interest) => (
-                  <motion.button
-                    key={interest}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => toggleInterest(interest)}
-                    className={`py-3 px-4 rounded-xl font-medium transition-all ${
-                      selectedInterests.includes(interest)
-                        ? "bg-yellow-300 text-purple-700"
-                        : "bg-white/20 text-white hover:bg-white/30"
-                    }`}
-                  >
-                    {interest}
-                  </motion.button>
-                ))}
+                {INTERESTS.map((interest) => {
+                  const isSelected = selectedInterests.includes(interest);
+                  const isDisabled = !isSelected && selectedInterests.length >= MAX_INTERESTS;
+
+                  return (
+                    <motion.button
+                      key={interest}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => toggleInterest(interest)}
+                      disabled={isDisabled}
+                      className={`py-3 px-4 rounded-xl font-medium transition-all ${
+                        isSelected
+                          ? "bg-yellow-300 text-purple-700"
+                          : isDisabled
+                          ? "bg-white/10 text-white/50 cursor-not-allowed"
+                          : "bg-white/20 text-white hover:bg-white/30"
+                      }`}
+                    >
+                      {interest}
+                    </motion.button>
+                  );
+                })}
               </div>
 
               <div className="flex gap-4">

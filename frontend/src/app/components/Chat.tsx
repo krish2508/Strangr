@@ -11,9 +11,10 @@ export function Chat() {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMode = location.state?.mode || "text";
+  const interests = Array.isArray(location.state?.interests) ? location.state.interests : [];
 
   const { messages, strangerTyping, strangerConnected, isSearching, sendMessage, sendTyping, sendNext } =
-    useChat("text");
+    useChat("text", interests);
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = useCallback(() => {

@@ -34,8 +34,25 @@ WEBRTC_SIGNAL_TYPES = {
     "call-end",
 }
 VALID_CHAT_MODES = {"text", "video"}
+MAX_INTERESTS = 3
 DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
 CORS_ALLOWED_ORIGINS = get_csv_env("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ORIGINS)
+
+
+def parse_interests(raw_interests: str) -> set[str]:
+    seen: set[str] = set()
+
+    for raw_interest in raw_interests.split(","):
+        interest = raw_interest.strip().lower()
+        if not interest or interest in seen:
+            continue
+
+        seen.add(interest)
+
+        if len(seen) == MAX_INTERESTS:
+            break
+
+    return seen
 
 
 async def notify_matched_users(user1: str, user2: str) -> None:
@@ -116,13 +133,23 @@ async def healthcheck() -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(default="text")):
+async def websocket_endpoint(
+    ws: WebSocket,
+    user_id: str,
+    mode: str = Query(default="text"),
+    interests: str = Query(default=""),
+):
     chat_mode = mode if mode in VALID_CHAT_MODES else "text"
+    user_interests = parse_interests(interests)
     await manager.connect(user_id, ws)
-    logger.info("WebSocket accepted for user=%s mode=%s", user_id, chat_mode)
-    matchmaker.add_user(user_id, chat_mode)
+    logger.info(
+        "WebSocket accepted for user=%s mode=%s interests=%s",
+        user_id,
+        chat_mode,
+        sorted(user_interests),
+    )
 
-    user1, user2 = matchmaker.match_users(chat_mode)
+    user1, user2 = matchmaker.match_or_enqueue(user_id, chat_mode, user_interests)
     if user1 and user2:
         create_session(user1, user2)
         logger.info("Initial match created mode=%s user1=%s user2=%s", chat_mode, user1, user2)
@@ -159,9 +186,8 @@ async def websocket_endpoint(ws: WebSocket, user_id: str, mode: str = Query(defa
 
 
                 remove_session(user_id)
-                matchmaker.add_user(user_id, chat_mode)
 
-                user1, user2 = matchmaker.match_users(chat_mode)
+                user1, user2 = matchmaker.match_or_enqueue(user_id, chat_mode, user_interests)
                 if user1 and user2:
                     create_session(user1, user2)
                     logger.info("Rematch created mode=%s user1=%s user2=%s", chat_mode, user1, user2)

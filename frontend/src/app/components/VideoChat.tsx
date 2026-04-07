@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import {
   Mic,
   MicOff,
@@ -55,6 +55,7 @@ function remoteStatusLabel(
 
 export function VideoChat() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [showChat, setShowChat] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [micEnabled, setMicEnabled] = useState(true);
@@ -79,6 +80,7 @@ export function VideoChat() {
   const isSettingRemoteAnswerPendingRef = useRef(false);
 
   const iceServers = useMemo(getIceServers, []);
+  const interests = Array.isArray(location.state?.interests) ? location.state.interests : [];
 
   const {
     userId,
@@ -98,7 +100,7 @@ export function VideoChat() {
     sendMediaState,
     updateCallStatus,
     consumePendingSignal,
-  } = useChat("video");
+  } = useChat("video", interests);
 
   const syncLocalVideoState = useCallback(() => {
     const hasActiveVideoTrack = localStreamRef.current
