@@ -80,6 +80,7 @@ export function VideoChat() {
   const makingOfferRef = useRef(false);
   const ignoreOfferRef = useRef(false);
   const isSettingRemoteAnswerPendingRef = useRef(false);
+  const hasAppliedRemoteAnswerRef = useRef(false);
 
   const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => getFallbackIceServers());
   const interests = Array.isArray(location.state?.interests) ? location.state.interests : [];
@@ -162,6 +163,7 @@ export function VideoChat() {
     makingOfferRef.current = false;
     ignoreOfferRef.current = false;
     isSettingRemoteAnswerPendingRef.current = false;
+    hasAppliedRemoteAnswerRef.current = false;
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
@@ -595,10 +597,11 @@ export function VideoChat() {
           sendSessionDescription(pc.localDescription);
         }
       } else if (latestSignal.type === "webrtc-answer") {
-        if (pc.signalingState === "stable") {
+        if (hasAppliedRemoteAnswerRef.current || pc.signalingState === "stable") {
           debugVideoChat("signal:answer-ignored", {
             fromUserId: latestSignal.fromUserId,
             signalingState: pc.signalingState,
+            hasAppliedRemoteAnswer: hasAppliedRemoteAnswerRef.current,
           });
           consumePendingSignal();
           return;
@@ -607,6 +610,7 @@ export function VideoChat() {
         try {
           isSettingRemoteAnswerPendingRef.current = true;
           await pc.setRemoteDescription(new RTCSessionDescription(latestSignal.sdp));
+          hasAppliedRemoteAnswerRef.current = true;
           await flushPendingIceCandidates();
         } finally {
           isSettingRemoteAnswerPendingRef.current = false;
