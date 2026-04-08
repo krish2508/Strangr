@@ -63,6 +63,7 @@ export function VideoChat() {
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [isMediaReady, setIsMediaReady] = useState(false);
+  const [isIceConfigReady, setIsIceConfigReady] = useState(false);
   const [hasRemoteTracks, setHasRemoteTracks] = useState(false);
   const [hasLocalVideoTrack, setHasLocalVideoTrack] = useState(false);
 
@@ -403,13 +404,16 @@ export function VideoChat() {
   const startNegotiationIfReady = useCallback(async () => {
     if (!matchedPartnerId || isSearching || !strangerConnected) return;
 
-    if (!isMediaReady || deviceError) {
+    if (!isIceConfigReady || !isMediaReady || deviceError) {
       debugVideoChat("peer:start-skipped", {
         matchedPartnerId,
+        isIceConfigReady,
         isMediaReady,
         hasDeviceError: Boolean(deviceError),
       });
-      updateCallStatus("error");
+      if (deviceError) {
+        updateCallStatus("error");
+      }
       return;
     }
 
@@ -428,6 +432,7 @@ export function VideoChat() {
     matchedPartnerId,
     isSearching,
     strangerConnected,
+    isIceConfigReady,
     isMediaReady,
     deviceError,
     ensurePeerConnection,
@@ -443,6 +448,10 @@ export function VideoChat() {
     const loadTurnCredentials = async () => {
       try {
         const turnCredentials = await api.getTurnCredentials();
+        debugVideoChat("turn-credentials:received", {
+          ttlSeconds: turnCredentials.ttl_seconds,
+          iceServers: turnCredentials.ice_servers.map((server) => server.urls),
+        });
         if (!isMounted || turnCredentials.ice_servers.length === 0) {
           return;
         }
@@ -459,8 +468,20 @@ export function VideoChat() {
             ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
             : [...fallbackServers, ...dynamicServers]
         );
+        debugVideoChat("ice-servers:active", {
+          hasFallbackTurn,
+          iceServers: (
+            hasFallbackTurn
+              ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
+              : [...fallbackServers, ...dynamicServers]
+          ).map((server) => server.urls),
+        });
       } catch (error) {
         console.warn("Failed to fetch TURN credentials. Using fallback ICE servers.", error);
+      } finally {
+        if (isMounted) {
+          setIsIceConfigReady(true);
+        }
       }
     };
 
@@ -517,7 +538,12 @@ export function VideoChat() {
   useEffect(() => {
     const latestSignal = pendingSignals[0];
 
-    if (!latestSignal || !matchedPartnerId || latestSignal.fromUserId !== matchedPartnerId) {
+    if (
+      !isIceConfigReady ||
+      !latestSignal ||
+      !matchedPartnerId ||
+      latestSignal.fromUserId !== matchedPartnerId
+    ) {
       return;
     }
 
@@ -616,6 +642,7 @@ export function VideoChat() {
     cleanupPeerConnection,
     ensurePeerConnection,
     flushPendingIceCandidates,
+    isIceConfigReady,
     matchedPartnerId,
     pendingSignals,
     sendSessionDescription,
