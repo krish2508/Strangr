@@ -81,6 +81,7 @@ export function VideoChat() {
   const ignoreOfferRef = useRef(false);
   const isSettingRemoteAnswerPendingRef = useRef(false);
   const hasAppliedRemoteAnswerRef = useRef(false);
+  const processingSignalRef = useRef(false);
 
   const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => getFallbackIceServers());
   const interests = Array.isArray(location.state?.interests) ? location.state.interests : [];
@@ -164,6 +165,7 @@ export function VideoChat() {
     ignoreOfferRef.current = false;
     isSettingRemoteAnswerPendingRef.current = false;
     hasAppliedRemoteAnswerRef.current = false;
+    processingSignalRef.current = false;
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
@@ -450,10 +452,6 @@ export function VideoChat() {
     const loadTurnCredentials = async () => {
       try {
         const turnCredentials = await api.getTurnCredentials();
-        debugVideoChat("turn-credentials:received", {
-          ttlSeconds: turnCredentials.ttl_seconds,
-          iceServers: turnCredentials.ice_servers.map((server) => server.urls),
-        });
         if (!isMounted || turnCredentials.ice_servers.length === 0) {
           return;
         }
@@ -470,14 +468,6 @@ export function VideoChat() {
             ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
             : [...fallbackServers, ...dynamicServers]
         );
-        debugVideoChat("ice-servers:active", {
-          hasFallbackTurn,
-          iceServers: (
-            hasFallbackTurn
-              ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
-              : [...fallbackServers, ...dynamicServers]
-          ).map((server) => server.urls),
-        });
       } catch (error) {
         console.warn("Failed to fetch TURN credentials. Using fallback ICE servers.", error);
       } finally {
@@ -550,6 +540,12 @@ export function VideoChat() {
     }
 
     const handleSignal = async () => {
+      if (processingSignalRef.current) {
+        return;
+      }
+      processingSignalRef.current = true;
+      consumePendingSignal();
+
       if (latestSignal.type === "call-end") {
         debugVideoChat("signal:received", {
           type: latestSignal.type,
@@ -558,7 +554,7 @@ export function VideoChat() {
         cleanupPeerConnection();
         setHasRemoteTracks(false);
         updateCallStatus("ended");
-        consumePendingSignal();
+        processingSignalRef.current = false;
         return;
       }
 
@@ -581,7 +577,7 @@ export function VideoChat() {
             fromUserId: latestSignal.fromUserId,
             polite,
           });
-          consumePendingSignal();
+          processingSignalRef.current = false;
           return;
         }
 
@@ -603,7 +599,7 @@ export function VideoChat() {
             signalingState: pc.signalingState,
             hasAppliedRemoteAnswer: hasAppliedRemoteAnswerRef.current,
           });
-          consumePendingSignal();
+          processingSignalRef.current = false;
           return;
         }
 
@@ -636,11 +632,13 @@ export function VideoChat() {
           }
         }
       }
-
-      consumePendingSignal();
+      processingSignalRef.current = false;
     };
 
-    void handleSignal();
+    void handleSignal().catch((error) => {
+      processingSignalRef.current = false;
+      console.error("Failed to process realtime signal", error);
+    });
   }, [
     consumePendingSignal,
     cleanupPeerConnection,
