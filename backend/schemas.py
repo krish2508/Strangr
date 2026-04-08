@@ -37,3 +37,14 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+
+
+class TurnIceServer(BaseModel):
+    urls: list[str]
+    username: Optional[str] = None
+    credential: Optional[str] = None
+
+
+class TurnCredentialsResponse(BaseModel):
+    ttl_seconds: int
+    ice_servers: list[TurnIceServer]

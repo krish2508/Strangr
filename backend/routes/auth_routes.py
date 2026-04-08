@@ -34,3 +34,9 @@ async def google_auth(data: schemas.GoogleAuth, db: AsyncSession = Depends(get_d
 async def read_users_me(current_user: models.User = Depends(get_current_user)):
     logger.debug(f"GET /api/users/me — {current_user.email}")
     return current_user
+
+
+@router.get("/webrtc/turn-credentials", response_model=schemas.TurnCredentialsResponse)
+async def get_turn_credentials(current_user: models.User = Depends(get_current_user)):
+    logger.debug(f"GET /api/webrtc/turn-credentials — {current_user.email}")
+    return AuthController.get_turn_credentials(current_user)

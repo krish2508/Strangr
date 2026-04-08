@@ -1,8 +1,12 @@
 import os
+import base64
+import hashlib
+import hmac
 import requests as http_requests
 from fastapi import HTTPException, status
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 import schemas
 import models
 from utils import auth_utils
@@ -12,6 +16,7 @@ logger = get_logger(__name__)
 
 GOOGLE_TOKENINFO_URL = "https://www.googleapis.com/oauth2/v1/tokeninfo"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+TURN_CREDENTIAL_TTL_SECONDS = int(os.getenv("TURN_CREDENTIAL_TTL_SECONDS", "3600"))
 
 
 def _get_google_client_id() -> str:
@@ -181,3 +186,46 @@ class AuthController:
         token_response = _build_token_response(user)
         logger.info(f"Google login successful for: {email}")
         return token_response
+
+    @staticmethod
+    def get_turn_credentials(user: models.User) -> schemas.TurnCredentialsResponse:
+        shared_secret = os.getenv("TURN_SHARED_SECRET", "").strip()
+        udp_url = os.getenv("TURN_UDP_URL", "").strip()
+        tls_url = os.getenv("TURN_TLS_URL", "").strip()
+
+        if not shared_secret or (not udp_url and not tls_url):
+            logger.info("TURN dynamic credentials requested but TURN env is not fully configured")
+            return schemas.TurnCredentialsResponse(ttl_seconds=0, ice_servers=[])
+
+        expiry = int(datetime.now(timezone.utc).timestamp()) + TURN_CREDENTIAL_TTL_SECONDS
+        username = f"{expiry}:{user.id}"
+        digest = hmac.new(
+            shared_secret.encode("utf-8"),
+            username.encode("utf-8"),
+            hashlib.sha1,
+        ).digest()
+        credential = base64.b64encode(digest).decode("utf-8")
+
+        ice_servers: list[schemas.TurnIceServer] = []
+        if udp_url:
+            ice_servers.append(
+                schemas.TurnIceServer(
+                    urls=[udp_url],
+                    username=username,
+                    credential=credential,
+                )
+            )
+        if tls_url:
+            ice_servers.append(
+                schemas.TurnIceServer(
+                    urls=[tls_url],
+                    username=username,
+                    credential=credential,
+                )
+            )
+
+        logger.debug("Issued TURN credentials for user_id=%s ttl=%s", user.id, TURN_CREDENTIAL_TTL_SECONDS)
+        return schemas.TurnCredentialsResponse(
+            ttl_seconds=TURN_CREDENTIAL_TTL_SECONDS,
+            ice_servers=ice_servers,
+        )
