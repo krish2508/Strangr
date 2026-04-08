@@ -21,4 +21,12 @@ export const api = {
     const res = await axiosInstance.get("/users/me");
     return res.data;
   },
+
+  async getTurnCredentials(): Promise<{
+    ttl_seconds: number;
+    ice_servers: RTCIceServer[];
+  }> {
+    const res = await axiosInstance.get("/webrtc/turn-credentials");
+    return res.data;
+  },
 };

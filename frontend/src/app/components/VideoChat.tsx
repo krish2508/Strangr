@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   Mic,
@@ -16,6 +16,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { Matching } from "./Matching";
 import { MediaState, useChat } from "../hooks/useChat";
+import { api } from "../api";
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -29,7 +30,7 @@ function debugVideoChat(event: string, payload?: Record<string, unknown>) {
   console.info(`[video-chat] ${timestamp} ${event}`);
 }
 
-function getIceServers(): RTCIceServer[] {
+function getFallbackIceServers(): RTCIceServer[] {
   const raw = import.meta.env.VITE_WEBRTC_ICE_SERVERS;
   if (!raw) return DEFAULT_ICE_SERVERS;
 
@@ -79,7 +80,7 @@ export function VideoChat() {
   const ignoreOfferRef = useRef(false);
   const isSettingRemoteAnswerPendingRef = useRef(false);
 
-  const iceServers = useMemo(getIceServers, []);
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => getFallbackIceServers());
   const interests = Array.isArray(location.state?.interests) ? location.state.interests : [];
 
   const {
@@ -435,6 +436,40 @@ export function VideoChat() {
     micEnabled,
     videoEnabled,
   ]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadTurnCredentials = async () => {
+      try {
+        const turnCredentials = await api.getTurnCredentials();
+        if (!isMounted || turnCredentials.ice_servers.length === 0) {
+          return;
+        }
+
+        const fallbackServers = getFallbackIceServers();
+        const dynamicServers = turnCredentials.ice_servers;
+        const hasFallbackTurn = fallbackServers.some((server) => {
+          const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+          return urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"));
+        });
+
+        setIceServers(
+          hasFallbackTurn
+            ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
+            : [...fallbackServers, ...dynamicServers]
+        );
+      } catch (error) {
+        console.warn("Failed to fetch TURN credentials. Using fallback ICE servers.", error);
+      }
+    };
+
+    void loadTurnCredentials();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     attachLocalStream();
