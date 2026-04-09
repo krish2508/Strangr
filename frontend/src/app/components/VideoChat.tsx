@@ -54,6 +54,20 @@ function remoteStatusLabel(
   return "Video chat in progress...";
 }
 
+function getSignalKey(
+  signal: ReturnType<typeof useChat>["pendingSignals"][number]
+): string {
+  if (signal.type === "webrtc-offer" || signal.type === "webrtc-answer") {
+    return `${signal.type}:${signal.fromUserId}:${signal.sdp.type}:${signal.sdp.sdp ?? ""}`;
+  }
+
+  if (signal.type === "webrtc-ice-candidate") {
+    return `${signal.type}:${signal.fromUserId}:${signal.candidate.candidate}`;
+  }
+
+  return `${signal.type}:${signal.fromUserId}:${signal.reason}`;
+}
+
 export function VideoChat() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -82,6 +96,7 @@ export function VideoChat() {
   const isSettingRemoteAnswerPendingRef = useRef(false);
   const hasAppliedRemoteAnswerRef = useRef(false);
   const processingSignalRef = useRef(false);
+  const processedSignalKeysRef = useRef<Set<string>>(new Set());
 
   const [iceServers, setIceServers] = useState<RTCIceServer[]>(() => getFallbackIceServers());
   const interests = Array.isArray(location.state?.interests) ? location.state.interests : [];
@@ -166,6 +181,7 @@ export function VideoChat() {
     isSettingRemoteAnswerPendingRef.current = false;
     hasAppliedRemoteAnswerRef.current = false;
     processingSignalRef.current = false;
+    processedSignalKeysRef.current.clear();
 
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
@@ -546,6 +562,17 @@ export function VideoChat() {
       processingSignalRef.current = true;
       consumePendingSignal();
 
+      const signalKey = getSignalKey(latestSignal);
+      if (processedSignalKeysRef.current.has(signalKey)) {
+        debugVideoChat("signal:duplicate-ignored", {
+          type: latestSignal.type,
+          fromUserId: latestSignal.fromUserId,
+        });
+        processingSignalRef.current = false;
+        return;
+      }
+      processedSignalKeysRef.current.add(signalKey);
+
       if (latestSignal.type === "call-end") {
         debugVideoChat("signal:received", {
           type: latestSignal.type,
@@ -590,6 +617,12 @@ export function VideoChat() {
             type: pc.localDescription.type,
             partnerId: matchedPartnerId,
           });
+          if (pc.localDescription.type === "answer") {
+            debugVideoChat("signal:answer-send", {
+              partnerId: matchedPartnerId,
+              sdpPrefix: (pc.localDescription.sdp ?? "").slice(0, 80),
+            });
+          }
           sendSessionDescription(pc.localDescription);
         }
       } else if (latestSignal.type === "webrtc-answer") {

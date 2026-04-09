@@ -232,6 +232,16 @@ async def websocket_endpoint(
                         partner_id,
                         chat_mode,
                     )
+                    if msg_type in {"webrtc-offer", "webrtc-answer"}:
+                        sdp = data.get("sdp") or {}
+                        logger.info(
+                            "Forwarding SDP type=%s from=%s to=%s sdp_type=%s sdp_prefix=%s",
+                            msg_type,
+                            user_id,
+                            partner_id,
+                            sdp.get("type"),
+                            (sdp.get("sdp") or "")[:80],
+                        )
                     await partner_ws.send_json({
                         **data,
                         "fromUserId": user_id,

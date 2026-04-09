@@ -141,6 +141,19 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
           | { type: "media-state"; audioEnabled: boolean; videoEnabled: boolean }
           | IncomingSignalMessage;
 
+        if (
+          data.type === "webrtc-offer" ||
+          data.type === "webrtc-answer" ||
+          data.type === "webrtc-ice-candidate" ||
+          data.type === "call-end"
+        ) {
+          console.info("[realtime] ws:onmessage", {
+            type: data.type,
+            fromUserId: "fromUserId" in data ? data.fromUserId : undefined,
+            signalCountBefore: pendingSignals.length,
+          });
+        }
+
         if (data.type === "chat") {
           setStrangerTyping(false);
           addMessage(data.message, "stranger");
