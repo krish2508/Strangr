@@ -121,6 +121,18 @@ export function VideoChat() {
     consumePendingSignal,
   } = useChat("video", interests);
 
+  useEffect(() => {
+    debugVideoChat("component:mount", {
+      pathname: location.pathname,
+    });
+
+    return () => {
+      debugVideoChat("component:unmount", {
+        pathname: location.pathname,
+      });
+    };
+  }, [location.pathname]);
+
   const syncLocalVideoState = useCallback(() => {
     const hasActiveVideoTrack = localStreamRef.current
       .getVideoTracks()
@@ -175,6 +187,9 @@ export function VideoChat() {
   }, [attachLocalStream]);
 
   const cleanupPeerConnection = useCallback(() => {
+    debugVideoChat("peer:cleanup", {
+      activePartnerId: activePartnerRef.current,
+    });
     pendingIceCandidatesRef.current = [];
     makingOfferRef.current = false;
     ignoreOfferRef.current = false;
@@ -722,6 +737,11 @@ export function VideoChat() {
   };
 
   const toggleVideo = async () => {
+    debugVideoChat("action:toggle-video", {
+      matchedPartnerId,
+      isMediaReady,
+      videoEnabled,
+    });
     if (!matchedPartnerId && !isMediaReady && !videoEnabled) {
       await initializeLocalMedia();
       return;
@@ -788,6 +808,11 @@ export function VideoChat() {
   };
 
   const handleSkip = async () => {
+    debugVideoChat("action:skip", {
+      matchedPartnerId,
+      isSearching,
+      strangerConnected,
+    });
     cleanupPeerConnection();
     stopLocalMedia();
     sendNext();
@@ -795,6 +820,11 @@ export function VideoChat() {
   };
 
   const handleStop = () => {
+    debugVideoChat("action:stop", {
+      matchedPartnerId,
+      isSearching,
+      strangerConnected,
+    });
     sendSignalMessage({ type: "call-end", reason: "stop" });
     cleanupPeerConnection();
     stopLocalMedia();

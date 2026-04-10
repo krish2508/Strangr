@@ -121,7 +121,17 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
     const ws = new WebSocket(`${WS_URL}/ws/${userId}?${params.toString()}`);
     wsRef.current = ws;
 
+    console.info("[realtime] ws:connect", {
+      userId,
+      mode,
+      interestParam,
+    });
+
     ws.onopen = () => {
+      console.info("[realtime] ws:open", {
+        userId,
+        mode,
+      });
       setConnectionError(null);
       setStrangerConnected(false);
       setIsSearching(true);
@@ -171,6 +181,13 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
           const lower = systemText.toLowerCase();
           const isDisconnect = lower.includes("disconnected");
           const isMatched = lower.includes("matched");
+
+          console.info("[realtime] ws:system", {
+            message: systemText,
+            partnerId: "partnerId" in data ? data.partnerId : undefined,
+            isDisconnect,
+            isMatched,
+          });
 
           if (isMatched) {
             setStrangerConnected(true);
@@ -222,12 +239,20 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
     };
 
     ws.onclose = () => {
+      console.info("[realtime] ws:close", {
+        userId,
+        mode,
+      });
       setStrangerConnected(false);
       setConnectionError("Connection closed. Please refresh the page.");
       resetPeerState("ended");
     };
 
     ws.onerror = () => {
+      console.info("[realtime] ws:error", {
+        userId,
+        mode,
+      });
       addMessage("Connection error. Please refresh the page.", "system");
       setStrangerConnected(false);
       setConnectionError("Connection error. Please refresh the page.");
@@ -235,6 +260,10 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
     };
 
     return () => {
+      console.info("[realtime] ws:cleanup", {
+        userId,
+        mode,
+      });
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       ws.close();
     };
@@ -254,6 +283,9 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
   }, []);
 
   const sendNext = useCallback(() => {
+    console.info("[realtime] ws:send", {
+      type: "next",
+    });
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "next" }));
     }
@@ -267,6 +299,10 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
   }, [addMessage, resetPeerState]);
 
   const sendSignalMessage = useCallback((message: OutgoingSignalMessage) => {
+    console.info("[realtime] ws:send", {
+      type: message.type,
+      reason: "reason" in message ? message.reason : undefined,
+    });
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     }
