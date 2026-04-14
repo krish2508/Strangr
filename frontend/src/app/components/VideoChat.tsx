@@ -30,6 +30,16 @@ function debugVideoChat(event: string, payload?: Record<string, unknown>) {
   console.info(`[video-chat] ${timestamp} ${event}`);
 }
 
+function debugTurn(event: string, payload?: Record<string, unknown>) {
+  const timestamp = new Date().toISOString();
+  if (payload) {
+    console.info(`[TURN_DEBUG:${event}] ${timestamp}`, payload);
+    return;
+  }
+
+  console.info(`[TURN_DEBUG:${event}] ${timestamp}`);
+}
+
 function getFallbackIceServers(): RTCIceServer[] {
   const raw = import.meta.env.VITE_WEBRTC_ICE_SERVERS;
   if (!raw) return DEFAULT_ICE_SERVERS;
@@ -322,6 +332,14 @@ export function VideoChat() {
       partnerId,
       iceServers: iceServers.map((server) => server.urls),
     });
+    debugTurn("peer-create", {
+      partnerId,
+      iceTransportPolicy: "relay",
+      iceServers: iceServers.map((server) => ({
+        urls: Array.isArray(server.urls) ? server.urls : [server.urls],
+        username: server.username ?? null,
+      })),
+    });
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -334,6 +352,14 @@ export function VideoChat() {
           sdpMid: event.candidate.sdpMid,
           sdpMLineIndex: event.candidate.sdpMLineIndex,
           type: event.candidate.type,
+        });
+        debugTurn("candidate-send", {
+          partnerId,
+          type: event.candidate.type,
+          address: event.candidate.address,
+          protocol: event.candidate.protocol,
+          isRelay: event.candidate.type === "relay",
+          candidate: event.candidate.candidate,
         });
         sendSignalMessage({
           type: "webrtc-ice-candidate",
@@ -486,6 +512,14 @@ export function VideoChat() {
     const loadTurnCredentials = async () => {
       try {
         const turnCredentials = await api.getTurnCredentials();
+        debugTurn("credentials-response", {
+          ttlSeconds: turnCredentials.ttl_seconds,
+          iceServers: turnCredentials.ice_servers.map((server) => ({
+            urls: server.urls,
+            username: server.username,
+            hasCredential: Boolean(server.credential),
+          })),
+        });
         if (!isMounted || turnCredentials.ice_servers.length === 0) {
           return;
         }
@@ -497,12 +531,22 @@ export function VideoChat() {
           return urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"));
         });
 
-        setIceServers(
-          hasFallbackTurn
-            ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
-            : [...fallbackServers, ...dynamicServers]
-        );
+        const nextIceServers = hasFallbackTurn
+          ? [DEFAULT_ICE_SERVERS[0], ...dynamicServers]
+          : [...fallbackServers, ...dynamicServers];
+
+        debugTurn("ice-servers-active", {
+          iceServers: nextIceServers.map((server) => ({
+            urls: Array.isArray(server.urls) ? server.urls : [server.urls],
+            username: server.username ?? null,
+          })),
+        });
+
+        setIceServers(nextIceServers);
       } catch (error) {
+        debugTurn("credentials-error", {
+          message: error instanceof Error ? error.message : String(error),
+        });
         console.warn("Failed to fetch TURN credentials. Using fallback ICE servers.", error);
       } finally {
         if (isMounted) {
@@ -669,11 +713,23 @@ export function VideoChat() {
               candidate: latestSignal.candidate.candidate,
               fromUserId: latestSignal.fromUserId,
             });
+            const candidateValue = latestSignal.candidate.candidate ?? "";
+            debugTurn("candidate-apply", {
+              fromUserId: latestSignal.fromUserId,
+              isRelay: candidateValue.includes(" typ relay "),
+              candidate: candidateValue,
+            });
             await pc.addIceCandidate(new RTCIceCandidate(latestSignal.candidate));
           } else {
             debugVideoChat("ice-candidate:queue", {
               candidate: latestSignal.candidate.candidate,
               fromUserId: latestSignal.fromUserId,
+            });
+            const candidateValue = latestSignal.candidate.candidate ?? "";
+            debugTurn("candidate-queue", {
+              fromUserId: latestSignal.fromUserId,
+              isRelay: candidateValue.includes(" typ relay "),
+              candidate: candidateValue,
             });
             pendingIceCandidatesRef.current.push(latestSignal.candidate);
           }
