@@ -310,7 +310,10 @@ export function VideoChat() {
   }, [sendSessionDescription]);
 
   const createPeerConnection = useCallback((partnerId: string) => {
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = new RTCPeerConnection({
+      iceServers,
+      iceTransportPolicy: "relay",
+    });
     peerConnectionRef.current = pc;
     activePartnerRef.current = partnerId;
     pendingIceCandidatesRef.current = [];
