@@ -320,10 +320,7 @@ export function VideoChat() {
   }, [sendSessionDescription]);
 
   const createPeerConnection = useCallback((partnerId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers,
-      iceTransportPolicy: "relay",
-    });
+    const pc = new RTCPeerConnection({ iceServers });
     peerConnectionRef.current = pc;
     activePartnerRef.current = partnerId;
     pendingIceCandidatesRef.current = [];
@@ -334,7 +331,6 @@ export function VideoChat() {
     });
     debugTurn("peer-create", {
       partnerId,
-      iceTransportPolicy: "relay",
       iceServers: iceServers.map((server) => ({
         urls: Array.isArray(server.urls) ? server.urls : [server.urls],
         username: server.username ?? null,
