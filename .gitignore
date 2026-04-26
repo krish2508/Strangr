@@ -5,3 +5,4 @@ venv
 node_modules/
 deploy/env/production.env
 deploy/env/frontend.production.env
+frontend/dist

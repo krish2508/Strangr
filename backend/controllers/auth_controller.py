@@ -2,8 +2,9 @@ import os
 import base64
 import hashlib
 import hmac
+import uuid
 import requests as http_requests
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, Response, status
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
@@ -63,15 +64,70 @@ async def _get_user_by_email(db: AsyncSession, email: str) -> models.User | None
     return result.scalars().first()
 
 
-def _build_token_response(user: models.User) -> dict:
-    """Utility: create the standard token response dict for a given user."""
-    access_token = auth_utils.create_access_token(data={"sub": user.email})
-    refresh_token = auth_utils.create_refresh_token(data={"sub": user.email})
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
+def _get_client_ip(request: Request) -> str | None:
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+async def _create_session_tokens(
+    user: models.User,
+    db: AsyncSession,
+    request: Request,
+) -> tuple[str, str]:
+    refresh_expires_at = datetime.now(timezone.utc) + auth_utils.get_refresh_token_expires_delta()
+    refresh_jti = str(uuid.uuid4())
+    token_data = {
+        "sub": user.email,
+        "uid": str(user.id),
     }
+    access_token = auth_utils.create_access_token(data=token_data)
+    refresh_token = auth_utils.create_refresh_token(
+        data={
+            **token_data,
+            "jti": refresh_jti,
+        }
+    )
+
+    refresh_session = models.RefreshTokenSession(
+        user_id=user.id,
+        jti=refresh_jti,
+        expires_at=refresh_expires_at.replace(tzinfo=None),
+        user_agent=request.headers.get("User-Agent"),
+        ip_address=_get_client_ip(request),
+    )
+    db.add(refresh_session)
+    await db.flush()
+    return access_token, refresh_token
+
+
+async def _issue_auth_session(
+    user: models.User,
+    db: AsyncSession,
+    request: Request,
+    response: Response,
+) -> schemas.AuthSessionResponse:
+    access_token, refresh_token = await _create_session_tokens(user, db, request)
+    await db.commit()
+    auth_utils.set_auth_cookies(
+        response,
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+    return schemas.AuthSessionResponse.model_validate({"user": user})
+
+
+async def _get_refresh_session(
+    db: AsyncSession,
+    refresh_jti: str,
+) -> models.RefreshTokenSession | None:
+    result = await db.execute(
+        select(models.RefreshTokenSession).where(models.RefreshTokenSession.jti == refresh_jti)
+    )
+    return result.scalars().first()
 
 
 class AuthController:
@@ -107,7 +163,12 @@ class AuthController:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create user")
 
     @staticmethod
-    async def login(user_credentials: schemas.UserLogin, db: AsyncSession) -> dict:
+    async def login(
+        user_credentials: schemas.UserLogin,
+        db: AsyncSession,
+        request: Request,
+        response: Response,
+    ) -> schemas.AuthSessionResponse:
         """Authenticate a local user and return JWT tokens."""
         logger.info(f"Login attempt for email: {user_credentials.email}")
         try:
@@ -120,7 +181,7 @@ class AuthController:
                     headers={"WWW-Authenticate": "Bearer"},
                 )
 
-            token_response = _build_token_response(user)
+            token_response = await _issue_auth_session(user, db, request, response)
             logger.info(f"Login successful: {user_credentials.email}")
             return token_response
 
@@ -131,7 +192,12 @@ class AuthController:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed")
 
     @staticmethod
-    async def google_login(token: str, db: AsyncSession) -> dict:
+    async def google_login(
+        token: str,
+        db: AsyncSession,
+        request: Request,
+        response: Response,
+    ) -> schemas.AuthSessionResponse:
         """Authenticate or create a user via Google OAuth access token."""
         logger.info("Google login attempt received")
         _validate_google_access_token(token)
@@ -183,9 +249,68 @@ class AuthController:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error during Google login")
 
         # Step 3: Issue tokens
-        token_response = _build_token_response(user)
+        token_response = await _issue_auth_session(user, db, request, response)
         logger.info(f"Google login successful for: {email}")
         return token_response
+
+    @staticmethod
+    async def refresh_access_token(
+        refresh_token: str,
+        db: AsyncSession,
+        request: Request,
+        response: Response,
+    ) -> schemas.AuthSessionResponse:
+        """Rotate tokens using a valid refresh token."""
+        payload = auth_utils.decode_token_payload(refresh_token, expected_type="refresh")
+        email = str(payload["sub"])
+        refresh_jti = str(payload.get("jti") or "")
+        if not refresh_jti:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+        user = await _get_user_by_email(db, email)
+        if not user:
+            logger.warning(f"Refresh rejected — user not found for email: {email}")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+        refresh_session = await _get_refresh_session(db, refresh_jti)
+        if not refresh_session:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if refresh_session.revoked_at or refresh_session.expires_at <= now:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+        access_token, next_refresh_token = await _create_session_tokens(user, db, request)
+        next_refresh_payload = auth_utils.decode_token_payload(next_refresh_token, expected_type="refresh")
+        refresh_session.revoked_at = now
+        refresh_session.replaced_by_jti = str(next_refresh_payload.get("jti") or "")
+        await db.commit()
+        auth_utils.set_auth_cookies(
+            response,
+            access_token=access_token,
+            refresh_token=next_refresh_token,
+        )
+        logger.info(f"Token refresh successful for: {email}")
+        return schemas.AuthSessionResponse.model_validate({"user": user})
+
+    @staticmethod
+    async def logout(refresh_token: str | None, db: AsyncSession, response: Response) -> None:
+        auth_utils.clear_auth_cookies(response)
+        if not refresh_token:
+            return
+
+        try:
+            payload = auth_utils.decode_token_payload(refresh_token, expected_type="refresh")
+            refresh_jti = str(payload.get("jti") or "")
+            if not refresh_jti:
+                return
+            refresh_session = await _get_refresh_session(db, refresh_jti)
+            if not refresh_session or refresh_session.revoked_at:
+                return
+            refresh_session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            await db.commit()
+        except HTTPException:
+            return
 
     @staticmethod
     def get_turn_credentials(user: models.User) -> schemas.TurnCredentialsResponse:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useUserId } from "./useUserId";
+import { api } from "../api";
 
 export interface Message {
   id: string;
@@ -80,9 +80,9 @@ function createMessageId(): string {
  * Handles text chat, matchmaking, and WebRTC signaling on the same socket.
  */
 export function useChat(mode: ChatMode = "text", interests: string[] = []): UseChatReturn {
-  const userId = useUserId();
   const wsRef = useRef<WebSocket | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authRecoveryAttemptedRef = useRef(false);
   const interestParam = interests
     .map((interest) => interest.trim())
     .filter(Boolean)
@@ -90,6 +90,7 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
     .join(",");
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const [userId, setUserId] = useState("");
   const [strangerTyping, setStrangerTyping] = useState(false);
   const [strangerConnected, setStrangerConnected] = useState(false);
   const [isSearching, setIsSearching] = useState(true);
@@ -98,6 +99,7 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
   const [pendingSignals, setPendingSignals] = useState<IncomingSignalMessage[]>([]);
   const [callStatus, setCallStatus] = useState<CallStatus>("searching");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [wsConnectNonce, setWsConnectNonce] = useState(0);
 
   const addMessage = useCallback((text: string, sender: Message["sender"]) => {
     setMessages((prev) => [
@@ -114,38 +116,52 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams({ mode });
-    if (interestParam) {
-      params.set("interests", interestParam);
-    }
-    const ws = new WebSocket(`${WS_URL}/ws/${userId}?${params.toString()}`);
-    wsRef.current = ws;
+    let isMounted = true;
+    let ws: WebSocket | null = null;
 
-    console.info("[realtime] ws:connect", {
-      userId,
-      mode,
-      interestParam,
-    });
+    const connect = async () => {
+      try {
+        await api.getCurrentUser();
+      } catch {
+        if (isMounted) {
+          setConnectionError("Session expired. Please log in again.");
+          resetPeerState("error");
+        }
+        return;
+      }
 
-    ws.onopen = () => {
-      console.info("[realtime] ws:open", {
-        userId,
+      const params = new URLSearchParams({ mode });
+      if (interestParam) {
+        params.set("interests", interestParam);
+      }
+      ws = new WebSocket(`${WS_URL}/ws?${params.toString()}`);
+      wsRef.current = ws;
+
+      console.info("[realtime] ws:connect", {
         mode,
+        interestParam,
       });
-      setConnectionError(null);
-      setStrangerConnected(false);
-      setIsSearching(true);
-      resetPeerState("searching");
-      addMessage("Looking for a stranger to chat with...", "system");
-    };
 
-    ws.onmessage = (event) => {
+      ws.onopen = () => {
+        authRecoveryAttemptedRef.current = false;
+        console.info("[realtime] ws:open", {
+          mode,
+        });
+        setConnectionError(null);
+        setStrangerConnected(false);
+        setIsSearching(true);
+        resetPeerState("searching");
+        addMessage("Looking for a stranger to chat with...", "system");
+      };
+
+      ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as
           | {
               type: "chat";
               message: string;
             }
+          | { type: "session"; userId: string }
           | { type: "typing" }
           | { type: "system"; message: string; partnerId?: string }
           | { type: "media-state"; audioEnabled: boolean; videoEnabled: boolean }
@@ -164,7 +180,9 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
           });
         }
 
-        if (data.type === "chat") {
+        if (data.type === "session") {
+          setUserId(data.userId);
+        } else if (data.type === "chat") {
           setStrangerTyping(false);
           addMessage(data.message, "stranger");
           setStrangerConnected(true);
@@ -236,38 +254,55 @@ export function useChat(mode: ChatMode = "text", interests: string[] = []): UseC
       } catch {
         // Ignore malformed realtime payloads.
       }
+      };
+
+      ws.onclose = async (event) => {
+        console.info("[realtime] ws:close", {
+          mode,
+          code: event.code,
+        });
+        wsRef.current = null;
+        setStrangerConnected(false);
+        resetPeerState("ended");
+
+        if (event.code === 1008 && isMounted && !authRecoveryAttemptedRef.current) {
+          authRecoveryAttemptedRef.current = true;
+          try {
+            await api.getCurrentUser();
+            if (isMounted) {
+              setWsConnectNonce((prev) => prev + 1);
+            }
+            return;
+          } catch {
+            // Fall through to surfaced session error.
+          }
+        }
+
+        setConnectionError("Connection closed. Please refresh the page.");
+      };
+
+      ws.onerror = () => {
+        console.info("[realtime] ws:error", {
+          mode,
+        });
+        addMessage("Connection error. Please refresh the page.", "system");
+        setStrangerConnected(false);
+        setConnectionError("Connection error. Please refresh the page.");
+        resetPeerState("error");
+      };
     };
 
-    ws.onclose = () => {
-      console.info("[realtime] ws:close", {
-        userId,
-        mode,
-      });
-      setStrangerConnected(false);
-      setConnectionError("Connection closed. Please refresh the page.");
-      resetPeerState("ended");
-    };
-
-    ws.onerror = () => {
-      console.info("[realtime] ws:error", {
-        userId,
-        mode,
-      });
-      addMessage("Connection error. Please refresh the page.", "system");
-      setStrangerConnected(false);
-      setConnectionError("Connection error. Please refresh the page.");
-      resetPeerState("error");
-    };
+    void connect();
 
     return () => {
+      isMounted = false;
       console.info("[realtime] ws:cleanup", {
-        userId,
         mode,
       });
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-      ws.close();
+      ws?.close();
     };
-  }, [userId, mode, interestParam, addMessage, resetPeerState]);
+  }, [mode, interestParam, addMessage, resetPeerState, wsConnectNonce]);
 
   const sendMessage = useCallback((text: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

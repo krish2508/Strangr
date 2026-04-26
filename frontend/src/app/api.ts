@@ -13,11 +13,14 @@ export const api = {
 
   async login(data: { email: string; password: string }) {
     const res = await axiosInstance.post("/login", data);
-    return res.data; // { access_token, refresh_token, token_type }
+    return res.data;
+  },
+
+  async logout() {
+    await axiosInstance.post("/logout");
   },
 
   async getCurrentUser() {
-    // Token is automatically injected by the Axios interceptor
     const res = await axiosInstance.get("/users/me");
     return res.data;
   },

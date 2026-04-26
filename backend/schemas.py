@@ -35,6 +35,10 @@ class Token(BaseModel):
     token_type: str
 
 
+class AuthSessionResponse(BaseModel):
+    user: UserOut
+
+
 class TokenData(BaseModel):
     email: Optional[str] = None
 

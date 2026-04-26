@@ -3,8 +3,11 @@ import urllib.parse
 import json
 import time
 import sys
+import http.cookiejar
 
-base_url = "http://127.0.0.1:8004"
+base_url = "http://127.0.0.1:8004/api"
+cookie_jar = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
 
 time.sleep(2) # Give server time to start
 
@@ -17,7 +20,7 @@ try:
         headers={'Content-Type': 'application/json'}
     )
     try:
-        with urllib.request.urlopen(req) as response:
+        with opener.open(req) as response:
             print("Register response:", response.read().decode())
     except urllib.error.HTTPError as e:
         if e.code == 400:
@@ -32,23 +35,24 @@ try:
         data=json.dumps({"email": "test@test.com", "password": "password123"}).encode('utf-8'),
         headers={'Content-Type': 'application/json'}
     )
-    with urllib.request.urlopen(req) as response:
+    with opener.open(req) as response:
         data = json.loads(response.read().decode())
-        print("Login response received. Checking token...")
-        token = data.get("access_token")
-        if token:
-            print("Token acquired successfully.")
+        print("Login response received. Checking user payload and cookies...")
+        user = data.get("user")
+        access_cookie = next((cookie for cookie in cookie_jar if cookie.name == "strangr_access_token"), None)
+        refresh_cookie = next((cookie for cookie in cookie_jar if cookie.name == "strangr_refresh_token"), None)
+        if user and access_cookie and refresh_cookie:
+            print("Session acquired successfully.")
         else:
-            print("Failed to acquire token.", data)
+            print("Failed to acquire session.", data)
             sys.exit(1)
 
     # 3. Get /users/me
     print("\nTesting protected route /users/me...")
     req = urllib.request.Request(
-        f"{base_url}/users/me",
-        headers={'Authorization': f'Bearer {token}'}
+        f"{base_url}/users/me"
     )
-    with urllib.request.urlopen(req) as response:
+    with opener.open(req) as response:
         print("Me response:", response.read().decode())
 
 except urllib.error.HTTPError as e:

@@ -14,6 +14,7 @@ from redis_pubsub import start_listener
 from database import engine, Base
 from routes import auth_routes
 from settings import get_csv_env
+from utils.auth_utils import decode_token_payload, get_access_token_from_websocket
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -132,16 +133,30 @@ async def healthcheck() -> JSONResponse:
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
-@app.websocket("/ws/{user_id}")
+@app.websocket("/ws")
 async def websocket_endpoint(
     ws: WebSocket,
-    user_id: str,
     mode: str = Query(default="text"),
     interests: str = Query(default=""),
 ):
+    try:
+        access_token = get_access_token_from_websocket(ws)
+        payload = decode_token_payload(access_token, expected_type="access")
+        user_id = str(payload.get("uid") or "")
+        if not user_id:
+            await ws.close(code=1008)
+            return
+    except Exception:
+        await ws.close(code=1008)
+        return
+
     chat_mode = mode if mode in VALID_CHAT_MODES else "text"
     user_interests = parse_interests(interests)
     await manager.connect(user_id, ws)
+    await ws.send_json({
+        "type": "session",
+        "userId": user_id,
+    })
     logger.info(
         "WebSocket accepted for user=%s mode=%s interests=%s",
         user_id,

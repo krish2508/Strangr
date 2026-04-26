@@ -4,7 +4,6 @@ import { Zap, Mail, Lock, Eye, EyeOff, User as UserIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { useGoogleLogin } from "@react-oauth/google";
 import { api } from "../api";
-import { authToken } from "../authToken";
 
 export function Login() {
   const navigate = useNavigate();
@@ -21,9 +20,24 @@ export function Login() {
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
   useEffect(() => {
-    if (authToken.get()) {
-      navigate("/landing");
-    }
+    let isMounted = true;
+
+    const checkSession = async () => {
+      try {
+        await api.getCurrentUser();
+        if (isMounted) {
+          navigate("/landing");
+        }
+      } catch {
+        // No active session on first load.
+      }
+    };
+
+    void checkSession();
+
+    return () => {
+      isMounted = false;
+    };
   }, [navigate]);
 
   const validateForm = () => {
@@ -63,33 +77,24 @@ export function Login() {
     try {
       if (isSignUp) {
         // Register user
-        const response = await api.register({
+        await api.register({
           name: formData.name,
           email: formData.email,
           password: formData.password,
         });
 
         // Auto login after register
-        const tokenRes = await api.login({
+        await api.login({
           email: formData.email,
           password: formData.password,
         });
-
-        authToken.set(tokenRes.access_token);
-        localStorage.setItem("strangr_user", JSON.stringify({ ...response, loginTime: new Date().toISOString() }));
 
       } else {
         // Login user
-        const tokenRes = await api.login({
+        await api.login({
           email: formData.email,
           password: formData.password,
         });
-
-        authToken.set(tokenRes.access_token);
-
-        // Fetch current user and store in localStorage
-        const user = await api.getCurrentUser();
-        localStorage.setItem("strangr_user", JSON.stringify({ ...user, loginTime: new Date().toISOString() }));
       }
       navigate("/landing");
     } catch (err: any) {
@@ -105,13 +110,7 @@ export function Login() {
       setServerError("");
       setIsLoading(true);
       try {
-        const res = await api.googleLogin(tokenResponse.access_token);
-        authToken.set(res.access_token);
-
-        // Fetch current user and store in localStorage
-        const user = await api.getCurrentUser();
-        localStorage.setItem("strangr_user", JSON.stringify({ ...user, loginTime: new Date().toISOString() }));
-
+        await api.googleLogin(tokenResponse.access_token);
         navigate("/landing");
       } catch (err: any) {
         setServerError(err.message || "Google Login failed");
